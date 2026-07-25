@@ -317,8 +317,11 @@ impl Shared {
             }
 
             C2s::AppendEntry { entry } => {
-                // 서명 검증 없는 blind 모델 — 멤버 append 만 수락(Guest-Add admission 바인딩은 후속).
-                if !is_member {
+                // 멤버는 모든 엔트리, 게스트는 Add 만 허용(조인 §4.3.4). Add 의 정당성은 아래
+                // verify_chain 이 보장(grant_cert 가 sponsor 멤버 서명 + grant_sk 서명) — 임의
+                // 게스트의 위조 Add 는 체인 검증에서 탈락. locator 바인딩(§4.5)은 DoS 완화용 후속.
+                let is_add = matches!(sb_proto::decode::<LogEntry>(&entry), Ok(LogEntry::Add { .. }));
+                if !is_member && !is_add {
                     send_to(
                         &g,
                         &dev,
