@@ -99,7 +99,10 @@ async fn main() -> Result<()> {
         // 원스톱 초기화: server.toml 작성 + 신원 생성 + 토큰/지문 안내.
         let bind: SocketAddr = args.bind.parse().context("--bind 파싱 (host:port)")?;
         if !sb_proto::is_lan_allowed(&bind.ip()) {
-            bail!("--bind {} 는 LAN(사설망) 주소여야 합니다 (§4.5). 예: 127.0.0.1:45871 또는 192.168.x.y:45871", bind.ip());
+            bail!(
+                "--bind {} 는 LAN(사설망) 주소여야 합니다 (§4.5). 예: 127.0.0.1:45871 또는 192.168.x.y:45871",
+                bind.ip()
+            );
         }
         let id = load_or_create_identity(&args.data_dir)?;
         let (cert_der, _) = id.tls_material().map_err(|e| anyhow::anyhow!("{e}"))?;
