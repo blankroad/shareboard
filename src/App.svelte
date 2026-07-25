@@ -138,6 +138,7 @@
         <button class="btn {onbMode === 'host' ? 'primary' : ''}" onclick={() => (onbMode = "host")}>새로 시작 (이 기기가 서버)</button>
         <button class="btn {onbMode === 'join' ? 'primary' : ''}" onclick={() => (onbMode = "join")}>참여하기</button>
       </div>
+      {#if status?.join_error}<div class="warn-banner">가입 실패: {status.join_error}<br />초대 링크를 다시 확인해 주세요.</div>{/if}
       {#if err}<div class="warn-banner">{err}</div>{/if}
 
       {#if onbMode === "host"}
@@ -193,8 +194,12 @@
           <p class="pill">참여할 사람은 위 주소·지문 + <b>멤버 탭에서 발급한 초대 코드</b>를 입력하면 됩니다.</p>
         </div>
       {/if}
-      {#if !status.gk_present}
-        <div class="warn-banner">그룹 키 대기 중 — 멤버가 온라인이 되면 자동으로 동기화가 시작됩니다.</div>
+      {#if status.joining}
+        <div class="warn-banner">가입 처리 중… 서버 연결 + 로그 검증 + 그룹 키 수신을 진행합니다.</div>
+      {:else if status.connected && status.gk_present}
+        <div class="ok-banner">✅ 가입 완료 · 동기화 준비됨</div>
+      {:else if !status.gk_present}
+        <div class="warn-banner">그룹 키 대기 중 — 초대한 멤버가 온라인이 되면 자동으로 완료됩니다.</div>
       {/if}
       <div class="card">
         <div class="grid2">

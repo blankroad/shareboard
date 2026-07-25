@@ -23,6 +23,8 @@ pub fn status_of(core: &Core) -> StatusView {
         hosting: core.hosting,
         host_addr: core.host_addr.clone(),
         host_fingerprint: core.host_fp.map(|f| hex(&f)),
+        joining: core.joining,
+        join_error: core.join_error.clone(),
     }
 }
 
@@ -300,12 +302,31 @@ pub async fn create_workspace(
 
 /// 조인(새 기기). 코드 저장 → 재연결 시 게스트 조인 플로우.
 #[tauri::command]
-pub async fn join_workspace(state: State<'_, AppState>, code: String) -> Result<(), String> {
+pub async fn join_workspace(app: AppHandle, state: State<'_, AppState>, code: String) -> Result<(), String> {
     let mut core = state.lock().await;
     core.pending = Some(PendingAction::Join { code });
+    core.joining = true;
+    core.join_error = None;
+    emit_status(&app, &core);
     let rc = core.reconnect.clone();
     drop(core);
     rc.notify_one();
+    Ok(())
+}
+
+/// 온보딩 초기화 — 조인 실패/취소 후 서버 설정을 지우고 온보딩으로 복귀.
+#[tauri::command]
+pub async fn reset_onboarding(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    let mut core = state.lock().await;
+    core.settings.server.addr = None;
+    core.settings.server.fingerprint_hex = None;
+    core.settings.server.workspace_name = None;
+    core.server_fp = None;
+    core.pending = None;
+    core.joining = false;
+    core.join_error = None;
+    let _ = sb_store::files::save_json(&core.data_dir.join("settings.json"), &core.settings);
+    emit_status(&app, &core);
     Ok(())
 }
 
@@ -395,23 +416,30 @@ fn parse_invite_link(link: &str) -> Option<(String, String, String)> {
     Some((a?, f?, c?))
 }
 
-/// 초대 링크 하나로 참여(주소·지문·코드 자동 설정 → 조인).
-#[tauri::command]
-pub async fn join_by_link(app: AppHandle, state: State<'_, AppState>, link: String) -> Result<(), String> {
+/// 초대 링크 적용(공용) — UI 커맨드와 딥링크 핸들러가 공유.
+pub async fn apply_join_link(app: &AppHandle, state: &AppState, link: &str) -> Result<(), String> {
     let (addr, fp_hex, code) =
-        parse_invite_link(&link).ok_or("초대 링크 형식이 올바르지 않습니다 (shareboard://…)")?;
+        parse_invite_link(link).ok_or("초대 링크 형식이 올바르지 않습니다 (shareboard://…)")?;
     let fp = hex32(&fp_hex).ok_or("링크의 서버 지문이 올바르지 않습니다")?;
     let mut core = state.lock().await;
     core.settings.server.addr = Some(addr);
     core.settings.server.fingerprint_hex = Some(fp_hex);
     core.server_fp = Some(fp);
     core.pending = Some(PendingAction::Join { code });
+    core.joining = true;
+    core.join_error = None;
     let _ = sb_store::files::save_json(&core.data_dir.join("settings.json"), &core.settings);
-    emit_status(&app, &core);
+    emit_status(app, &core);
     let rc = core.reconnect.clone();
     drop(core);
     rc.notify_one();
     Ok(())
+}
+
+/// 초대 링크 하나로 참여(주소·지문·코드 자동 설정 → 조인).
+#[tauri::command]
+pub async fn join_by_link(app: AppHandle, state: State<'_, AppState>, link: String) -> Result<(), String> {
+    apply_join_link(&app, state.inner(), &link).await
 }
 
 /// keystore 에 현재 GK 저장(에폭 + 32B).

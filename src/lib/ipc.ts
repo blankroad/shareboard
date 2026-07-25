@@ -19,6 +19,8 @@ export type Status = {
   hosting: boolean;
   host_addr: string | null;
   host_fingerprint: string | null;
+  joining: boolean;
+  join_error: string | null;
 };
 
 export type HostInfo = { addr: string; fingerprint_hex: string };
@@ -58,6 +60,7 @@ export const api = {
   generateInvite: () => invoke<string>("generate_invite", { expires_at: Date.now() + 3600_000 }),
   generateInviteLink: () => invoke<string>("generate_invite_link"),
   joinByLink: (link: string) => invoke("join_by_link", { link }),
+  resetOnboarding: () => invoke("reset_onboarding"),
   hostWorkspace: (name: string) => invoke<HostInfo>("host_workspace", { name }),
   getHostInfo: () => invoke<HostInfo | null>("get_host_info"),
 };

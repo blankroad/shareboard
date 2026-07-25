@@ -39,6 +39,9 @@ pub struct Core {
     /// 호스팅 시 다른 사람이 접속할 주소 / 서버 지문(공유용).
     pub host_addr: Option<String>,
     pub host_fp: Option<[u8; 32]>,
+    /// 조인 진행 중 / 마지막 조인 실패 사유(UI 확인용).
+    pub joining: bool,
+    pub join_error: Option<String>,
     /// 현재 그룹 키(엔진과 동일 사본, 조인자 wrap 발급용).
     pub current_gk: Option<sb_crypto::GroupKey>,
     pub pending: Option<PendingAction>,
@@ -102,6 +105,8 @@ pub struct StatusView {
     pub hosting: bool,
     pub host_addr: Option<String>,
     pub host_fingerprint: Option<String>,
+    pub joining: bool,
+    pub join_error: Option<String>,
 }
 
 /// 호스팅 정보(공유용).

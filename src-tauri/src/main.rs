@@ -75,6 +75,8 @@ fn build_core() -> Core {
         hosting: false,
         host_addr: None,
         host_fp: None,
+        joining: false,
+        join_error: None,
         current_gk: if gk_present { Some(gk) } else { None },
         pending: None,
         log: Vec::new(),
@@ -136,9 +138,38 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_deep_link::init())
         .manage(state.clone())
         .setup(move |app| {
             setup_tray(app)?;
+
+            // shareboard:// 딥링크 자동 참여.
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                let app_handle = app.handle().clone();
+                let st = state.clone();
+                // 개발 빌드에서 현재 실행 파일을 스킴 핸들러로 등록 시도(플랫폼별 best-effort).
+                let _ = app.deep_link().register("shareboard");
+                app.deep_link().on_open_url(move |event| {
+                    for url in event.urls() {
+                        let link = url.to_string();
+                        if link.starts_with("shareboard://") {
+                            let app_handle = app_handle.clone();
+                            let st = st.clone();
+                            tauri::async_runtime::spawn(async move {
+                                if let Err(e) = commands::apply_join_link(&app_handle, &st, &link).await {
+                                    tracing::warn!("딥링크 참여 실패: {e}");
+                                }
+                                if let Some(w) = app_handle.get_webview_window("main") {
+                                    let _ = w.show();
+                                    let _ = w.set_focus();
+                                }
+                            });
+                        }
+                    }
+                });
+            }
+
             let handle = app.handle().clone();
             let st = state.clone();
             tauri::async_runtime::spawn(async move {
@@ -171,6 +202,7 @@ fn main() {
             commands::generate_invite,
             commands::generate_invite_link,
             commands::join_by_link,
+            commands::reset_onboarding,
             commands::host_workspace,
             commands::get_host_info,
         ])

@@ -84,6 +84,7 @@ label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 4px
 .empty { text-align: center; color: var(--muted); padding: 40px 0; }
 .code-box { font-family: ui-monospace, monospace; font-size: 22px; letter-spacing: 3px; text-align: center; padding: 16px; background: var(--primary-weak); border-radius: 10px; color: var(--primary); }
 .warn-banner { background: color-mix(in srgb, var(--warn) 15%, transparent); border: 1px solid var(--warn); border-radius: 8px; padding: 10px 12px; font-size: 12px; margin-bottom: 12px; }
+.ok-banner { background: color-mix(in srgb, var(--ok) 15%, transparent); border: 1px solid var(--ok); border-radius: 8px; padding: 10px 12px; font-size: 13px; font-weight: 600; margin-bottom: 12px; }
 .tabs2 { display: flex; gap: 8px; margin-bottom: 14px; }
 .tabs2 button { flex: 1; }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px; }

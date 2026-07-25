@@ -186,6 +186,17 @@ async fn session(app: &AppHandle, state: &AppState, mut handle: ClientHandle) {
         Some(PendingAction::Join { code }) => {
             if let Err(e) = guest_join(state, &mut handle, &code).await {
                 tracing::warn!("조인 실패: {e}");
+                // 실패를 UI에 확인시키고 온보딩으로 복귀(재시도 루프 방지).
+                let mut c = state.lock().await;
+                c.join_error = Some(e);
+                c.joining = false;
+                c.pending = None;
+                c.settings.server.addr = None;
+                c.settings.server.fingerprint_hex = None;
+                c.settings.server.workspace_name = None;
+                c.server_fp = None;
+                let _ = sb_store::files::save_json(&c.data_dir.join("settings.json"), &c.settings);
+                emit_status(app, &c);
                 return;
             }
         }
@@ -219,6 +230,8 @@ async fn session(app: &AppHandle, state: &AppState, mut handle: ClientHandle) {
         core.out = Some(handle.out.clone());
         core.connected = true;
         core.pending = None;
+        core.joining = false;
+        core.join_error = None;
         emit_status(app, &core);
     }
 

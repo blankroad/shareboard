@@ -27,6 +27,13 @@
       "csp": "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; connect-src ipc: http://ipc.localhost"
     }
   },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["shareboard"]
+      }
+    }
+  },
   "bundle": {
     "active": true,
     "targets": "all",
