@@ -72,6 +72,9 @@ fn build_core() -> Core {
         server_fp,
         connected: false,
         gk_present,
+        hosting: false,
+        host_addr: None,
+        host_fp: None,
         current_gk: if gk_present { Some(gk) } else { None },
         pending: None,
         log: Vec::new(),
@@ -166,6 +169,10 @@ fn main() {
             commands::create_workspace,
             commands::join_workspace,
             commands::generate_invite,
+            commands::generate_invite_link,
+            commands::join_by_link,
+            commands::host_workspace,
+            commands::get_host_info,
         ])
         .run(tauri::generate_context!())
         .expect("shareboard 실행 실패");

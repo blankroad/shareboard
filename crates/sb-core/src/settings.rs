@@ -190,6 +190,12 @@ pub struct ServerSettings {
     /// 워크스페이스 이름(표시용).
     #[serde(default)]
     pub workspace_name: Option<String>,
+    /// 이 기기가 릴레이 서버를 호스팅하는가(재시작 시 자동 재호스팅).
+    #[serde(default)]
+    pub host: bool,
+    /// 호스팅 포트(기본 45871).
+    #[serde(default)]
+    pub host_port: Option<u16>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

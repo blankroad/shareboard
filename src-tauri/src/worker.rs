@@ -27,6 +27,91 @@ pub fn keystore_for(data_dir: &Path) -> FileKeyStore {
     FileKeyStore::new(data_dir.join("keys")).expect("keystore dir")
 }
 
+/// 사내망(사설) IPv4 감지 — 호스팅 바인딩 주소. 없으면 loopback.
+pub fn detect_lan_ip() -> std::net::Ipv4Addr {
+    if_addrs::get_if_addrs()
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter(|i| !i.is_loopback())
+        .filter_map(|i| match i.ip() {
+            std::net::IpAddr::V4(v4) if v4.is_private() => Some(v4),
+            _ => None,
+        })
+        .next()
+        .unwrap_or(std::net::Ipv4Addr::LOCALHOST)
+}
+
+/// 서버 신원(클라 신원과 별개) get-or-create.
+pub fn load_or_create_server_identity(store: &FileKeyStore) -> anyhow::Result<sb_crypto::Identity> {
+    use sb_store::KeyStore;
+    match (store.get("server.signing")?, store.get("server.kem")?) {
+        (Some(s), Some(k)) if k.len() == 32 => {
+            let mut kem = [0u8; 32];
+            kem.copy_from_slice(&k);
+            sb_crypto::Identity::from_parts(&s, &kem).map_err(|e| anyhow::anyhow!("{e}"))
+        }
+        _ => {
+            let id = sb_crypto::Identity::generate();
+            store.set(
+                "server.signing",
+                &id.signing_pkcs8_der().map_err(|e| anyhow::anyhow!("{e}"))?,
+            )?;
+            store.set("server.kem", &id.kem_secret_bytes())?;
+            Ok(id)
+        }
+    }
+}
+
+/// 내장 릴레이 서버 시작(이미 실행 중이면 기존 정보 반환). 반환 `(bind_addr, fingerprint)`.
+pub async fn start_embedded_server(
+    state: &AppState,
+    token_hash: Option<[u8; 32]>,
+) -> anyhow::Result<(String, [u8; 32])> {
+    let (data_dir, port, already, cur) = {
+        let c = state.lock().await;
+        (
+            c.data_dir.clone(),
+            c.settings
+                .server
+                .host_port
+                .unwrap_or(sb_proto::params::DEFAULT_SERVER_PORT),
+            c.hosting,
+            (c.host_addr.clone(), c.host_fp),
+        )
+    };
+    if already {
+        return Ok((cur.0.unwrap_or_default(), cur.1.unwrap_or([0u8; 32])));
+    }
+
+    let store = keystore_for(&data_dir);
+    let server_id = load_or_create_server_identity(&store)?;
+    let server_fp = server_id.device_id();
+    let bind = format!("{}:{}", detect_lan_ip(), port);
+    let bind_addr: SocketAddr = bind.parse()?;
+    let acceptor = tokio_rustls::TlsAcceptor::from(
+        sb_server::tls::server_config(&server_id).map_err(|e| anyhow::anyhow!("{e}"))?,
+    );
+    let listener = tokio::net::TcpListener::bind(bind_addr)
+        .await
+        .map_err(|e| anyhow::anyhow!("포트 {port} 바인딩 실패(이미 사용 중일 수 있음): {e}"))?;
+    let shared = sb_server::Shared::with_persistence(token_hash, data_dir.join("server"));
+    tokio::spawn(sb_server::serve(listener, acceptor, shared));
+    tracing::info!("내장 서버 시작 @ {bind}");
+
+    let mut c = state.lock().await;
+    c.hosting = true;
+    c.host_addr = Some(bind.clone());
+    c.host_fp = Some(server_fp);
+    c.server_fp = Some(server_fp);
+    c.settings.server.addr = Some(bind.clone());
+    c.settings.server.fingerprint_hex = Some(hex(&server_fp));
+    c.settings.server.host = true;
+    c.settings.server.host_port = Some(port);
+    let _ = sb_store::files::save_json(&c.data_dir.join("settings.json"), &c.settings);
+    Ok((bind, server_fp))
+}
+
 fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -36,6 +121,17 @@ fn now_ms() -> u64 {
 
 /// 워커 메인 — 재연결 루프.
 pub async fn run(app: AppHandle, state: AppState) {
+    // 재시작 시 호스팅 자동 재개(설정에 host=true 인 경우).
+    let host_on_start = { state.lock().await.settings.server.host };
+    if host_on_start {
+        if let Err(e) = start_embedded_server(&state, None).await {
+            tracing::error!("내장 서버 재호스팅 실패: {e}");
+        } else {
+            let core = state.lock().await;
+            emit_status(&app, &core);
+        }
+    }
+
     loop {
         let (addr_opt, fp_opt, identity, reconnect) = {
             let core = state.lock().await;

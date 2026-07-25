@@ -34,6 +34,11 @@ pub struct Core {
     pub server_fp: Option<[u8; 32]>,
     pub connected: bool,
     pub gk_present: bool,
+    /// 이 기기가 릴레이 서버를 호스팅 중인가.
+    pub hosting: bool,
+    /// 호스팅 시 다른 사람이 접속할 주소 / 서버 지문(공유용).
+    pub host_addr: Option<String>,
+    pub host_fp: Option<[u8; 32]>,
     /// 현재 그룹 키(엔진과 동일 사본, 조인자 wrap 발급용).
     pub current_gk: Option<sb_crypto::GroupKey>,
     pub pending: Option<PendingAction>,
@@ -94,6 +99,16 @@ pub struct StatusView {
     pub sync_enabled: bool,
     pub gk_present: bool,
     pub device_id: String,
+    pub hosting: bool,
+    pub host_addr: Option<String>,
+    pub host_fingerprint: Option<String>,
+}
+
+/// 호스팅 정보(공유용).
+#[derive(Clone, Serialize)]
+pub struct HostInfo {
+    pub addr: String,
+    pub fingerprint_hex: String,
 }
 
 #[derive(Clone, Serialize)]

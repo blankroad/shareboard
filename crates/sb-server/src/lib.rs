@@ -45,6 +45,36 @@ struct Inner {
     invites: HashMap<[u8; 32], Vec<u8>>,
     mailbox: HashMap<DeviceId, Vec<u8>>,
     pending_pull: HashMap<ContentId, DeviceId>,
+    /// 설정 시 워크스페이스 로그를 여기 영속화(호스트 앱 재시작에도 유지). None = 메모리 전용.
+    data_dir: Option<std::path::PathBuf>,
+}
+
+/// 워크스페이스 로그 영속 파일 경로.
+fn log_path(dir: &std::path::Path) -> std::path::PathBuf {
+    dir.join("wslog.cbor")
+}
+
+/// 로그를 디스크에서 로드 → (log, claimed, epoch).
+fn load_log(dir: &std::path::Path) -> (Vec<Vec<u8>>, bool, Epoch) {
+    match std::fs::read(log_path(dir)) {
+        Ok(bytes) => {
+            let log: Vec<Vec<u8>> = sb_proto::decode(&bytes).unwrap_or_default();
+            let epoch = verify_chain(&log, 0).map(|v| v.epoch).unwrap_or(0);
+            let claimed = !log.is_empty();
+            (log, claimed, epoch)
+        }
+        Err(_) => (Vec::new(), false, 0),
+    }
+}
+
+/// 로그를 디스크에 저장(영속 활성 시).
+fn save_log(inner: &Inner) {
+    if let Some(dir) = &inner.data_dir {
+        let _ = std::fs::create_dir_all(dir);
+        if let Ok(bytes) = sb_proto::encode(&inner.log) {
+            let _ = std::fs::write(log_path(dir), bytes);
+        }
+    }
 }
 
 impl Inner {
@@ -77,18 +107,35 @@ fn broadcast_members(inner: &Inner, roster: &BTreeSet<DeviceId>, except: &Device
 
 impl Shared {
     pub fn new(setup_token_hash: Option<[u8; 32]>) -> Arc<Self> {
+        Self::build(setup_token_hash, Vec::new(), false, 0, None)
+    }
+
+    /// 영속 활성 — `data_dir/wslog.cbor` 에서 로그를 로드하고 이후 변경을 저장한다.
+    pub fn with_persistence(setup_token_hash: Option<[u8; 32]>, data_dir: std::path::PathBuf) -> Arc<Self> {
+        let (log, claimed, epoch) = load_log(&data_dir);
+        Self::build(setup_token_hash, log, claimed, epoch, Some(data_dir))
+    }
+
+    fn build(
+        setup_token_hash: Option<[u8; 32]>,
+        log: Vec<Vec<u8>>,
+        claimed: bool,
+        epoch: Epoch,
+        data_dir: Option<std::path::PathBuf>,
+    ) -> Arc<Self> {
         Arc::new(Self {
             inner: Mutex::new(Inner {
                 setup_token_hash,
-                claimed: false,
-                log: Vec::new(),
-                epoch: 0,
+                claimed,
+                log,
+                epoch,
                 head_cache: VecDeque::new(),
                 sessions: HashMap::new(),
                 profiles: HashMap::new(),
                 invites: HashMap::new(),
                 mailbox: HashMap::new(),
                 pending_pull: HashMap::new(),
+                data_dir,
             }),
         })
     }
@@ -288,6 +335,7 @@ impl Shared {
                         g.log = vec![genesis];
                         g.claimed = true;
                         g.epoch = 0;
+                        save_log(&g);
                         send_to(
                             &g,
                             &dev,
@@ -337,6 +385,7 @@ impl Shared {
                     Ok(v) if v.accepted == trial.len() => {
                         g.log.push(entry.clone());
                         g.epoch = v.epoch;
+                        save_log(&g);
                         if let Ok(LogEntry::Epoch { .. }) = sb_proto::decode::<LogEntry>(&entry) {
                             g.head_cache.clear();
                         }

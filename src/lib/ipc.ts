@@ -16,7 +16,12 @@ export type Status = {
   sync_enabled: boolean;
   gk_present: boolean;
   device_id: string;
+  hosting: boolean;
+  host_addr: string | null;
+  host_fingerprint: string | null;
 };
+
+export type HostInfo = { addr: string; fingerprint_hex: string };
 
 export type Member = { device_id: string; name: string; online: boolean; platform: string };
 
@@ -51,6 +56,10 @@ export const api = {
     invoke("create_workspace", { name, setup_token, now_ms: Date.now() }),
   joinWorkspace: (code: string) => invoke("join_workspace", { code }),
   generateInvite: () => invoke<string>("generate_invite", { expires_at: Date.now() + 3600_000 }),
+  generateInviteLink: () => invoke<string>("generate_invite_link"),
+  joinByLink: (link: string) => invoke("join_by_link", { link }),
+  hostWorkspace: (name: string) => invoke<HostInfo>("host_workspace", { name }),
+  getHostInfo: () => invoke<HostInfo | null>("get_host_info"),
 };
 
 export async function on(event: string, cb: () => void): Promise<UnlistenFn> {

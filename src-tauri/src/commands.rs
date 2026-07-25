@@ -20,6 +20,71 @@ pub fn status_of(core: &Core) -> StatusView {
         sync_enabled: core.settings.sync.enabled,
         gk_present: core.gk_present,
         device_id: hex(&core.device_id()),
+        hosting: core.hosting,
+        host_addr: core.host_addr.clone(),
+        host_fingerprint: core.host_fp.map(|f| hex(&f)),
+    }
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// 이 기기를 서버로 삼아 워크스페이스를 새로 만든다(내장 릴레이 시작 + 창립자).
+#[tauri::command]
+pub async fn host_workspace(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    name: String,
+) -> Result<HostInfo, String> {
+    let token = sb_crypto::invite::generate_code();
+    let hash = sb_crypto::hash::sha256(token.as_bytes());
+    // 내장 서버 시작.
+    let (addr, fp) = crate::worker::start_embedded_server(state.inner(), Some(hash))
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // 창립자로서 워크스페이스 생성 → 워커가 재연결하며 Claim.
+    let mut core = state.lock().await;
+    let (genesis, wid) = sb_crypto::wslog::build_genesis(&core.identity, &name, now_ms());
+    let gbytes = sb_crypto::wslog::entry_bytes(&genesis);
+    let gk = sb_crypto::GroupKey::generate(0);
+    persist_group_key(&core, &gk).map_err(|e| e.to_string())?;
+    core.engine.set_group_key(gk.clone());
+    core.current_gk = Some(gk);
+    core.gk_present = true;
+    core.workspace_id = Some(wid);
+    core.settings.server.workspace_name = Some(name);
+    core.log = vec![gbytes.clone()];
+    core.pending = Some(PendingAction::Claim {
+        genesis: gbytes,
+        token: (*token).to_string(),
+    });
+    let _ = sb_store::files::save_json(&core.data_dir.join("settings.json"), &core.settings);
+    emit_status(&app, &core);
+    let rc = core.reconnect.clone();
+    drop(core);
+    rc.notify_one();
+    Ok(HostInfo {
+        addr,
+        fingerprint_hex: hex(&fp),
+    })
+}
+
+/// 현재 호스팅 정보(공유용). 호스팅 아니면 None.
+#[tauri::command]
+pub async fn get_host_info(state: State<'_, AppState>) -> Result<Option<HostInfo>, String> {
+    let c = state.lock().await;
+    if c.hosting {
+        Ok(Some(HostInfo {
+            addr: c.host_addr.clone().unwrap_or_default(),
+            fingerprint_hex: c.host_fp.map(|f| hex(&f)).unwrap_or_default(),
+        }))
+    } else {
+        Ok(None)
     }
 }
 
@@ -244,31 +309,109 @@ pub async fn join_workspace(state: State<'_, AppState>, code: String) -> Result<
     Ok(())
 }
 
-/// 초대 발급 → PutInvite. 반환 = 표시용 코드.
-#[tauri::command]
-pub async fn generate_invite(state: State<'_, AppState>, expires_at: u64) -> Result<String, String> {
-    let core = state.lock().await;
+/// 초대 발급 재료(락을 잡은 채 await 하지 않도록 소유값만 추출 — Core 는 !Sync).
+struct InviteCtx {
+    identity: std::sync::Arc<sb_crypto::Identity>,
+    wid: [u8; 32],
+    server_fp: [u8; 32],
+    head: [u8; 32],
+    out: tokio::sync::mpsc::Sender<C2s>,
+}
+
+fn invite_ctx(core: &Core) -> Result<InviteCtx, String> {
     if !core.connected {
         return Err("서버에 연결되어야 합니다".into());
     }
-    let wid = core.workspace_id.ok_or("워크스페이스 없음")?;
-    let fp = core.server_fp.ok_or("서버 지문 없음")?;
-    let head = core.log_head().1;
+    Ok(InviteCtx {
+        identity: core.identity.clone(),
+        wid: core.workspace_id.ok_or("워크스페이스 없음")?,
+        server_fp: core.server_fp.ok_or("서버 지문 없음")?,
+        head: core.log_head().1,
+        out: core.out.clone().ok_or("연결 없음")?,
+    })
+}
+
+/// 초대 발급(공용): make_invite + PutInvite. 반환 = 정규형 12자 코드. 락 해제 후 호출.
+async fn issue_invite(ctx: InviteCtx) -> Result<String, String> {
+    let expires_at = now_ms() + (sb_proto::params::INVITE_TTL_DEFAULT_S as u64) * 1000;
     let (code, locator, blob) =
-        sb_crypto::make_invite(&core.identity, wid, head, fp, expires_at).map_err(|e| e.to_string())?;
-    let display = sb_crypto::invite::format_display(&code);
-    if let Some(out) = &core.out {
-        out.send(C2s::PutInvite {
+        sb_crypto::make_invite(&ctx.identity, ctx.wid, ctx.head, ctx.server_fp, expires_at)
+            .map_err(|e| e.to_string())?;
+    let canonical = (*code).to_string();
+    ctx.out
+        .send(C2s::PutInvite {
             locator,
             blob,
             ttl_s: sb_proto::params::INVITE_TTL_DEFAULT_S,
         })
         .await
-        .map_err(|_| "전송 실패")?;
-    } else {
-        return Err("연결 없음".into());
+        .map_err(|_| "전송 실패".to_string())?;
+    Ok(canonical)
+}
+
+/// 초대 발급 → 표시용 코드(수동 입력 폴백용).
+#[tauri::command]
+pub async fn generate_invite(state: State<'_, AppState>, expires_at: u64) -> Result<String, String> {
+    let _ = expires_at; // TTL 은 기본값 사용
+    let ctx = {
+        let core = state.lock().await;
+        invite_ctx(&core)?
+    };
+    let code = issue_invite(ctx).await?;
+    Ok(sb_crypto::invite::format_display(&code))
+}
+
+/// 초대 링크 생성 — 서버 주소·지문·코드를 한 문자열로 묶는다(교환 편의, §8.2).
+#[tauri::command]
+pub async fn generate_invite_link(state: State<'_, AppState>) -> Result<String, String> {
+    let (addr, fp_hex, ctx) = {
+        let core = state.lock().await;
+        let addr = core.settings.server.addr.clone().ok_or("서버 미설정")?;
+        let fp_hex = core
+            .settings
+            .server
+            .fingerprint_hex
+            .clone()
+            .ok_or("서버 지문 없음")?;
+        (addr, fp_hex, invite_ctx(&core)?)
+    };
+    let code = issue_invite(ctx).await?;
+    Ok(format!("shareboard://join?a={addr}&f={fp_hex}&c={code}"))
+}
+
+/// 초대 링크 파싱 → (addr, fingerprint_hex, code).
+fn parse_invite_link(link: &str) -> Option<(String, String, String)> {
+    let q = link.trim().strip_prefix("shareboard://join?")?;
+    let (mut a, mut f, mut c) = (None, None, None);
+    for kv in q.split('&') {
+        let (k, v) = kv.split_once('=')?;
+        match k {
+            "a" => a = Some(v.to_string()),
+            "f" => f = Some(v.to_string()),
+            "c" => c = Some(v.to_string()),
+            _ => {}
+        }
     }
-    Ok(display)
+    Some((a?, f?, c?))
+}
+
+/// 초대 링크 하나로 참여(주소·지문·코드 자동 설정 → 조인).
+#[tauri::command]
+pub async fn join_by_link(app: AppHandle, state: State<'_, AppState>, link: String) -> Result<(), String> {
+    let (addr, fp_hex, code) =
+        parse_invite_link(&link).ok_or("초대 링크 형식이 올바르지 않습니다 (shareboard://…)")?;
+    let fp = hex32(&fp_hex).ok_or("링크의 서버 지문이 올바르지 않습니다")?;
+    let mut core = state.lock().await;
+    core.settings.server.addr = Some(addr);
+    core.settings.server.fingerprint_hex = Some(fp_hex);
+    core.server_fp = Some(fp);
+    core.pending = Some(PendingAction::Join { code });
+    let _ = sb_store::files::save_json(&core.data_dir.join("settings.json"), &core.settings);
+    emit_status(&app, &core);
+    let rc = core.reconnect.clone();
+    drop(core);
+    rc.notify_one();
+    Ok(())
 }
 
 /// keystore 에 현재 GK 저장(에폭 + 32B).
