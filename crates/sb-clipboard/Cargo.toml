@@ -1,0 +1,23 @@
+[package]
+name = "sb-clipboard"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "shareboard 클립보드 접근 추상화 — ClipboardAccess 트레이트, 변경 감지 watcher, mock + arboard 실백엔드 (§6)"
+
+[features]
+default = ["arboard-backend"]
+# 실제 OS 클립보드 백엔드. Linux 빌드는 libxcb/x11 개발 라이브러리 필요(§6).
+arboard-backend = ["dep:arboard", "dep:image"]
+
+[dependencies]
+sb-proto = { path = "../sb-proto" }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+arboard = { workspace = true, optional = true }
+image = { workspace = true, optional = true }
+
+[dev-dependencies]
+sb-core = { path = "../sb-core" }
+sb-crypto = { path = "../sb-crypto" }

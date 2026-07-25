@@ -1,0 +1,42 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "shareboard",
+  "version": "0.1.0",
+  "identifier": "com.shareboard.app",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "pnpm dev",
+    "beforeBuildCommand": "pnpm build"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "label": "main",
+        "title": "shareboard",
+        "width": 920,
+        "height": 660,
+        "minWidth": 640,
+        "minHeight": 480,
+        "visible": true,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; connect-src ipc: http://ipc.localhost"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png"
+    ],
+    "category": "Utility",
+    "shortDescription": "사내망 클립보드 동기화",
+    "longDescription": "사내망(LAN) 전용 크로스플랫폼 클립보드 동기화. E2E 암호화, 승인된 피어만."
+  }
+}

@@ -1,0 +1,25 @@
+[package]
+name = "sb-net"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "shareboard 클라이언트 네트워킹 — TLS 1.3 mTLS + 서버 지문 pinning, LengthDelimitedCodec 프레이밍, 연결 FSM 프리미티브(§4.5, §5)"
+
+[dependencies]
+sb-proto = { path = "../sb-proto" }
+sb-crypto = { path = "../sb-crypto" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+tokio-rustls = { workspace = true }
+rustls = { workspace = true }
+bytes = { workspace = true }
+futures = { workspace = true }
+sha2 = { workspace = true }
+x509-parser = "0.16"
+
+[dev-dependencies]
+rcgen = { workspace = true }

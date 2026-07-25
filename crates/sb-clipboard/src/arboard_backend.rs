@@ -1,0 +1,80 @@
+//! arboard 기반 실제 OS 클립보드 백엔드 (§6). 텍스트 + PNG(RGBA↔PNG 변환).
+//!
+//! 주의: concealed(비밀번호 매니저) 힌트 감지는 arboard 가 노출하지 않아 현재 `false`.
+//! 플랫폼별 pasteboard 타입 검사(macOS `org.nspasteboard.ConcealedType` 등)는 후속 과제(§4.6 D17).
+//! macOS `changeCount` 기반 저비용 감지(D8)도 후속 — 현재는 상위 `PollingWatcher` 사용.
+
+use std::io::Cursor;
+
+use arboard::{Clipboard, ImageData};
+use image::{DynamicImage, ImageFormat, RgbaImage};
+
+use crate::{ClipContent, ClipError, ClipboardAccess};
+
+/// arboard 백엔드. 상태를 들지 않고 호출마다 클립보드 핸들을 연다(단순·안전).
+pub struct ArboardAccess;
+
+impl ArboardAccess {
+    pub fn new() -> Self {
+        ArboardAccess
+    }
+}
+
+impl Default for ArboardAccess {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+fn err<E: std::fmt::Display>(e: E) -> ClipError {
+    ClipError::Access(e.to_string())
+}
+
+fn rgba_to_png(img: ImageData) -> Result<Vec<u8>, ClipError> {
+    let w = img.width as u32;
+    let h = img.height as u32;
+    let raw = img.bytes.into_owned();
+    let rgba = RgbaImage::from_raw(w, h, raw).ok_or(ClipError::Unsupported)?;
+    let mut buf = Vec::new();
+    DynamicImage::ImageRgba8(rgba)
+        .write_to(&mut Cursor::new(&mut buf), ImageFormat::Png)
+        .map_err(err)?;
+    Ok(buf)
+}
+
+fn png_to_rgba(png: &[u8]) -> Result<ImageData<'static>, ClipError> {
+    let img = image::load_from_memory_with_format(png, ImageFormat::Png).map_err(err)?;
+    let rgba = img.to_rgba8();
+    let (w, h) = rgba.dimensions();
+    Ok(ImageData { width: w as usize, height: h as usize, bytes: rgba.into_raw().into() })
+}
+
+impl ClipboardAccess for ArboardAccess {
+    fn read(&self) -> Result<Option<ClipContent>, ClipError> {
+        let mut cb = Clipboard::new().map_err(err)?;
+        // 텍스트 우선(§5.5 다중 포맷 우선순위: 텍스트 > 이미지).
+        if let Ok(t) = cb.get_text() {
+            if !t.is_empty() {
+                return Ok(Some(ClipContent::text(t)));
+            }
+        }
+        match cb.get_image() {
+            Ok(img) => Ok(Some(ClipContent::image_png(rgba_to_png(img)?))),
+            Err(_) => Ok(None),
+        }
+    }
+
+    fn write(&self, content: &ClipContent) -> Result<(), ClipError> {
+        let mut cb = Clipboard::new().map_err(err)?;
+        match content.kind {
+            sb_proto::ContentKind::Text => {
+                let s = String::from_utf8_lossy(&content.bytes).into_owned();
+                cb.set_text(s).map_err(err)
+            }
+            sb_proto::ContentKind::ImagePng => {
+                let data = png_to_rgba(&content.bytes)?;
+                cb.set_image(data).map_err(err)
+            }
+        }
+    }
+}

@@ -1,0 +1,15 @@
+[package]
+name = "sb-proto"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "shareboard 공유 프로토콜 타입 — 와이어 메시지(§5.2), E2E payload, 워크스페이스 로그 엔트리, LAN allowlist(§4.5), 파라미터(§5.6)"
+
+[dependencies]
+serde = { workspace = true }
+ciborium = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

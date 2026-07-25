@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 44 44">
+  <!-- 트레이 전용 글리프 — macOS template image(순수 검정 + 알파). PLAN.md §9 -->
+  <!-- 배경 없음(투명). 색은 OS가 반전 처리. -->
+  <!-- 클립보드 본체 -->
+  <rect x="11" y="8.5" width="22" height="29" rx="4" fill="none" stroke="#000000" stroke-width="2.6"/>
+  <!-- 집게 -->
+  <rect x="17.5" y="5.5" width="9" height="6" rx="2" fill="#000000"/>
+  <!-- 공유 노드 -->
+  <line x1="17.5" y1="24" x2="27" y2="18" stroke="#000000" stroke-width="2.4"/>
+  <line x1="17.5" y1="24" x2="27" y2="30" stroke="#000000" stroke-width="2.4"/>
+  <circle cx="17.5" cy="24" r="3" fill="#000000"/>
+  <circle cx="27.5" cy="18" r="3" fill="#000000"/>
+  <circle cx="27.5" cy="30" r="3" fill="#000000"/>
+</svg>

@@ -1,0 +1,16 @@
+[package]
+name = "sb-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "shareboard 동기화 엔진 — LWW 판정, 에코 방지(suppress), E2E 봉인/개봉 오케스트레이션, 설정, 히스토리 모델"
+
+[dependencies]
+sb-proto = { path = "../sb-proto" }
+sb-crypto = { path = "../sb-crypto" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+zstd = { workspace = true }

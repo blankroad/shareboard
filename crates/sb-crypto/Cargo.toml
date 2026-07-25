@@ -1,0 +1,25 @@
+[package]
+name = "sb-crypto"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "shareboard 암호 계층 — 장치 신원(P-256)·KEM(X25519)·그룹키(XChaCha20)·초대(Argon2id)·워크스페이스 로그 해시체인(§4)"
+
+[dependencies]
+sb-proto = { path = "../sb-proto" }
+serde = { workspace = true }
+ciborium = { workspace = true }
+thiserror = { workspace = true }
+blake3 = { workspace = true }
+sha2 = { workspace = true }
+hkdf = { workspace = true }
+hmac = { workspace = true }
+chacha20poly1305 = { workspace = true }
+argon2 = { workspace = true }
+zeroize = { workspace = true }
+rand = { workspace = true }
+rand_core = { workspace = true }
+x25519-dalek = { workspace = true }
+p256 = { workspace = true }
+rcgen = { workspace = true }

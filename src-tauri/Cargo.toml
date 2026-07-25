@@ -1,0 +1,32 @@
+[package]
+name = "shareboard"
+version = "0.1.0"
+edition = "2021"
+description = "shareboard — 사내망 전용 크로스플랫폼 클립보드 동기화"
+default-run = "shareboard"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+dirs = "5"
+
+sb-proto = { path = "../crates/sb-proto" }
+sb-crypto = { path = "../crates/sb-crypto" }
+sb-core = { path = "../crates/sb-core" }
+sb-net = { path = "../crates/sb-net" }
+sb-store = { path = "../crates/sb-store" }
+sb-clipboard = { path = "../crates/sb-clipboard" }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true

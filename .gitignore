@@ -1,0 +1,28 @@
+# Rust
+/target
+**/target
+Cargo.lock.orig
+
+# Node / frontend
+node_modules
+dist
+.svelte-kit
+/src-tauri/target
+
+# OS / editor
+.DS_Store
+*.swp
+.idea
+.vscode/*
+!.vscode/extensions.json
+
+# shareboard runtime data / secrets — 절대 커밋 금지
+*.key
+*.pem
+identity.json
+peers.json
+workspace.json
+history.db*
+server.toml.local
+/data
+/logs

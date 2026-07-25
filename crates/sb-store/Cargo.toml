@@ -1,0 +1,19 @@
+[package]
+name = "sb-store"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "shareboard 로컬 저장 — 암호화 히스토리(rusqlite 필드 암호화), 키 저장소(폴백 사다리), settings/workspace atomic write (§4.6, §7)"
+
+[dependencies]
+sb-proto = { path = "../sb-proto" }
+sb-crypto = { path = "../sb-crypto" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+zeroize = { workspace = true }
+rand_core = { workspace = true }
+rusqlite = { workspace = true }
+dirs = { workspace = true }
