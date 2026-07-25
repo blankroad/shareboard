@@ -1,6 +1,11 @@
-// Rust 커맨드/이벤트에 대한 타입 안전 래퍼. 인자 키는 Rust 파라미터명(snake_case)과 일치해야 한다.
-import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+// Rust 커맨드/이벤트 래퍼. Tauri API 는 **지연 로딩**한다 — 최상위 import 가 실패해도
+// UI 셸은 렌더되도록(런타임에 __TAURI_INTERNALS__ 부재 등으로 죽지 않게).
+import type { UnlistenFn } from "@tauri-apps/api/event";
+
+async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<T>(cmd, args);
+}
 
 export type Status = {
   connected: boolean;
@@ -48,6 +53,7 @@ export const api = {
   generateInvite: () => invoke<string>("generate_invite", { expires_at: Date.now() + 3600_000 }),
 };
 
-export function on(event: string, cb: () => void): Promise<UnlistenFn> {
+export async function on(event: string, cb: () => void): Promise<UnlistenFn> {
+  const { listen } = await import("@tauri-apps/api/event");
   return listen(event, () => cb());
 }
