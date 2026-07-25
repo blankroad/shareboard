@@ -28,7 +28,8 @@ pub use kinds::{
 pub use log::{GrantCert, LogEntry};
 pub use net::is_lan_allowed;
 pub use wire::{
-    decode, decode_env, encode, encode_env, C2s, Envelope, Hello, KeyUpdate, S2c, SignalHdr, Welcome,
+    decode, decode_env, encode, encode_env, C2s, Envelope, Hello, KeyUpdate, PresenceEntry, S2c, SignalHdr,
+    Welcome,
 };
 
 /// 프로토콜 인코딩/디코딩 오류.
@@ -73,7 +74,20 @@ mod tests {
             epoch: 1,
             log_tail: vec![vec![9, 9], vec![8]],
             pending_key_update: Some(vec![1, 2]),
-            presence: vec![([1u8; 32], true, None), ([2u8; 32], false, Some(vec![5, 6]))],
+            presence: vec![
+                PresenceEntry {
+                    device_id: [1u8; 32],
+                    online: true,
+                    addr: Some("192.168.0.5:1".into()),
+                    enc_profile: None,
+                },
+                PresenceEntry {
+                    device_id: [2u8; 32],
+                    online: false,
+                    addr: None,
+                    enc_profile: Some(vec![5, 6]),
+                },
+            ],
             head: vec![(
                 [1u8; 32],
                 SignalHdr {

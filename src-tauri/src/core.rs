@@ -89,6 +89,8 @@ pub struct MemberView {
     pub name: String,
     pub online: bool,
     pub platform: String,
+    /// 서버가 스탬프한 접속 주소(사람 식별용).
+    pub addr: Option<String>,
 }
 
 /// 프런트로 보내는 상태 스냅샷.

@@ -25,7 +25,13 @@ export type Status = {
 
 export type HostInfo = { addr: string; fingerprint_hex: string };
 
-export type Member = { device_id: string; name: string; online: boolean; platform: string };
+export type Member = {
+  device_id: string;
+  name: string;
+  online: boolean;
+  platform: string;
+  addr: string | null;
+};
 
 export type HistoryItem = {
   id: string;

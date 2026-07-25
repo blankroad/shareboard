@@ -41,6 +41,8 @@ struct Inner {
     epoch: Epoch,
     head_cache: VecDeque<(DeviceId, SignalHdr, Vec<u8>)>,
     sessions: HashMap<DeviceId, Tx>,
+    /// device_id → 접속 주소(멤버 식별용, presence 에 스탬프).
+    addrs: HashMap<DeviceId, String>,
     profiles: HashMap<DeviceId, Vec<u8>>,
     invites: HashMap<[u8; 32], Vec<u8>>,
     mailbox: HashMap<DeviceId, Vec<u8>>,
@@ -131,6 +133,7 @@ impl Shared {
                 epoch,
                 head_cache: VecDeque::new(),
                 sessions: HashMap::new(),
+                addrs: HashMap::new(),
                 profiles: HashMap::new(),
                 invites: HashMap::new(),
                 mailbox: HashMap::new(),
@@ -140,9 +143,10 @@ impl Shared {
         })
     }
 
-    async fn on_connect(&self, dev: DeviceId, tx: Tx) {
+    async fn on_connect(&self, dev: DeviceId, tx: Tx, addr: String) {
         let mut g = self.inner.lock().await;
         g.sessions.insert(dev, tx);
+        g.addrs.insert(dev, addr.clone());
         let roster = g.roster();
         if roster.contains(&dev) {
             let profile = g.profiles.get(&dev).cloned();
@@ -153,6 +157,7 @@ impl Shared {
                 S2c::Presence {
                     device_id: dev,
                     online: true,
+                    addr: Some(addr),
                     enc_profile: profile,
                 },
             );
@@ -162,6 +167,7 @@ impl Shared {
     async fn on_disconnect(&self, dev: DeviceId) {
         let mut g = self.inner.lock().await;
         g.sessions.remove(&dev);
+        g.addrs.remove(&dev);
         let roster = g.roster();
         broadcast_members(
             &g,
@@ -170,6 +176,7 @@ impl Shared {
             S2c::Presence {
                 device_id: dev,
                 online: false,
+                addr: None,
                 enc_profile: None,
             },
         );
@@ -222,7 +229,12 @@ impl Shared {
                 };
                 let presence = roster
                     .iter()
-                    .map(|d| (*d, g.sessions.contains_key(d), g.profiles.get(d).cloned()))
+                    .map(|d| sb_proto::PresenceEntry {
+                        device_id: *d,
+                        online: g.sessions.contains_key(d),
+                        addr: g.addrs.get(d).cloned(),
+                        enc_profile: g.profiles.get(d).cloned(),
+                    })
                     .collect();
                 let head = g.head_cache.iter().cloned().collect();
                 let pending = g.mailbox.remove(&dev);
@@ -437,6 +449,7 @@ impl Shared {
                     S2c::Presence {
                         device_id: dev,
                         online: true,
+                        addr: g.addrs.get(&dev).cloned(),
                         enc_profile: Some(e2e),
                     },
                 );
@@ -455,7 +468,7 @@ impl Shared {
 /// accept 루프. 각 연결을 별도 task 로 처리.
 pub async fn serve(listener: TcpListener, acceptor: TlsAcceptor, shared: Arc<Shared>) {
     loop {
-        let (tcp, _peer) = match listener.accept().await {
+        let (tcp, peer) = match listener.accept().await {
             Ok(x) => x,
             Err(e) => {
                 tracing::warn!("accept 실패: {e}");
@@ -465,14 +478,19 @@ pub async fn serve(listener: TcpListener, acceptor: TlsAcceptor, shared: Arc<Sha
         let acceptor = acceptor.clone();
         let shared = shared.clone();
         tokio::spawn(async move {
-            if let Err(e) = handle_conn(tcp, acceptor, shared).await {
+            if let Err(e) = handle_conn(tcp, peer.to_string(), acceptor, shared).await {
                 tracing::debug!("연결 종료: {e}");
             }
         });
     }
 }
 
-async fn handle_conn(tcp: TcpStream, acceptor: TlsAcceptor, shared: Arc<Shared>) -> anyhow::Result<()> {
+async fn handle_conn(
+    tcp: TcpStream,
+    peer: String,
+    acceptor: TlsAcceptor,
+    shared: Arc<Shared>,
+) -> anyhow::Result<()> {
     tcp.set_nodelay(true).ok();
     let tls = acceptor.accept(tcp).await?;
     let dev = {
@@ -488,7 +506,7 @@ async fn handle_conn(tcp: TcpStream, acceptor: TlsAcceptor, shared: Arc<Shared>)
     let (mut sink, mut stream) = framed.split();
     let (tx, mut rx) = mpsc::unbounded_channel::<S2c>();
 
-    shared.on_connect(dev, tx).await;
+    shared.on_connect(dev, tx, peer).await;
 
     let writer = tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {

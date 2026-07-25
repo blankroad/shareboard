@@ -382,11 +382,17 @@ async fn handle_msg(
             fetches.remove(&id);
         }
         S2c::Presence {
-            device_id, online, ..
+            device_id,
+            online,
+            addr,
+            ..
         } => {
             let mut core = state.lock().await;
             if let Some(m) = core.members.iter_mut().find(|m| m.device_id == hex(&device_id)) {
                 m.online = online;
+                if addr.is_some() {
+                    m.addr = addr;
+                }
             }
             let _ = app.emit("members-changed", ());
             emit_status(app, &core);
@@ -607,19 +613,17 @@ async fn recv_ack(handle: &mut ClientHandle) -> Option<u64> {
 }
 
 /// VerifiedLog + presence → MemberView 목록.
-fn members_from(
-    v: &sb_crypto::VerifiedLog,
-    presence: &[(DeviceId, bool, Option<Vec<u8>>)],
-) -> Vec<MemberView> {
+fn members_from(v: &sb_crypto::VerifiedLog, presence: &[sb_proto::PresenceEntry]) -> Vec<MemberView> {
     v.members
         .keys()
         .map(|d| {
-            let online = presence.iter().any(|(pd, on, _)| pd == d && *on);
+            let p = presence.iter().find(|e| &e.device_id == d);
             MemberView {
                 device_id: hex(d),
                 name: crate::core::hex(d)[..8].to_string(),
-                online,
+                online: p.map(|e| e.online).unwrap_or(false),
                 platform: String::new(),
+                addr: p.and_then(|e| e.addr.clone()),
             }
         })
         .collect()

@@ -228,7 +228,12 @@
           {#each members as m}
             <div class="row">
               <span class="dot {m.online ? 'on' : 'off'}"></span>
-              <div class="grow"><span class="mono">{m.device_id.slice(0, 16)}…</span></div>
+              <div class="grow">
+                <span style="font-weight:600">
+                  {m.device_id === status?.device_id ? "이 기기" : (m.addr ?? "주소 미상")}
+                </span>
+                <span class="mono" style="margin-left:8px;font-size:11px;color:var(--muted)">{m.device_id.slice(0, 8)}</span>
+              </div>
               <span class="pill">{m.online ? "온라인" : "오프라인"}</span>
             </div>
           {/each}

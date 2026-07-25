@@ -46,6 +46,18 @@ pub struct KeyUpdate {
     pub wrap: Vec<u8>,
 }
 
+/// presence 한 항목 — 멤버 식별용. `addr` 는 서버가 스탬프한 접속 주소(metadata, blind relay 는
+/// 어차피 IP 를 보므로 origin 스탬프와 동일 선상). 사내망에서 사람 식별에 사용.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PresenceEntry {
+    pub device_id: DeviceId,
+    pub online: bool,
+    #[serde(default)]
+    pub addr: Option<String>,
+    #[serde(default)]
+    pub enc_profile: Option<Vec<u8>>,
+}
+
 /// 세션 수립 (Member lane, mTLS 확립 직후) (§5.2).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Hello {
@@ -70,8 +82,8 @@ pub struct Welcome {
     /// 오프라인 중 회전/조인 wrap(본인 몫 최신 1개).
     #[serde(default)]
     pub pending_key_update: Option<Vec<u8>>,
-    /// 전 멤버 + 온라인 + enc_profile.
-    pub presence: Vec<(DeviceId, bool, Option<Vec<u8>>)>,
+    /// 전 멤버 + 온라인 + 주소 + enc_profile.
+    pub presence: Vec<PresenceEntry>,
     /// 최근 HEAD_CACHE_DEPTH(4)건 signal — 클라가 복호 후 LWW로 최신 1건 판정.
     pub head: Vec<(DeviceId, SignalHdr, Vec<u8>)>,
     /// 진단 전용(시계 오차 로그) — 판정 사용 금지.
@@ -234,6 +246,8 @@ pub enum S2c {
     Presence {
         device_id: DeviceId,
         online: bool,
+        #[serde(default)]
+        addr: Option<String>,
         enc_profile: Option<Vec<u8>>,
     },
     /// 본인 제거 "힌트"(인증 안 됨) — §5.4. 키 파기·crypto-erase 금지.
