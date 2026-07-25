@@ -25,6 +25,15 @@ struct Args {
     /// setup 토큰 + 해시를 생성하고 종료.
     #[arg(long)]
     gen_token: bool,
+    /// 서버를 한 번에 초기화: server.toml 작성 + 신원 생성 + 토큰/지문 출력 후 종료.
+    #[arg(long)]
+    init: bool,
+    /// (--init) 바인딩 주소. LAN 주소여야 함. 여러 대에서 쓰려면 서버의 사내망 IP:포트.
+    #[arg(long, default_value = "127.0.0.1:45871")]
+    bind: String,
+    /// (--init) 데이터 디렉터리(신원·로그·초대 저장).
+    #[arg(long, default_value = "./sb-server-data")]
+    data_dir: String,
 }
 
 fn hex(b: &[u8]) -> String {
@@ -83,6 +92,42 @@ async fn main() -> Result<()> {
         let h = sha256(token.as_bytes());
         println!("setup_token = {}", &*token);
         println!("setup_token_hash = \"{}\"   # server.toml 에 넣으세요", hex(&h));
+        return Ok(());
+    }
+
+    if args.init {
+        // 원스톱 초기화: server.toml 작성 + 신원 생성 + 토큰/지문 안내.
+        let bind: SocketAddr = args.bind.parse().context("--bind 파싱 (host:port)")?;
+        if !sb_proto::is_lan_allowed(&bind.ip()) {
+            bail!("--bind {} 는 LAN(사설망) 주소여야 합니다 (§4.5). 예: 127.0.0.1:45871 또는 192.168.x.y:45871", bind.ip());
+        }
+        let id = load_or_create_identity(&args.data_dir)?;
+        let (cert_der, _) = id.tls_material().map_err(|e| anyhow::anyhow!("{e}"))?;
+        let fp = cert_fingerprint(&CertificateDer::from(cert_der));
+        let token = invite::generate_code();
+        let hash = sha256(token.as_bytes());
+
+        let toml = format!(
+            "# shareboard 서버 설정 (sb-server --init 로 생성)\n\
+             bind_addr = \"{bind}\"\n\
+             data_dir = \"{}\"\n\
+             setup_token_hash = \"{}\"\n",
+            args.data_dir,
+            hex(&hash),
+        );
+        std::fs::write(&args.config, &toml).context("server.toml 쓰기")?;
+
+        println!("✅ 서버 설정 완료 → {}\n", args.config);
+        println!("① 이 서버 실행:");
+        println!("     sb-server --config {}\n", args.config);
+        println!("② 워크스페이스를 처음 만들 사람(창립자)에게 전달할 setup 토큰:");
+        println!("     {}\n", &*token);
+        println!("③ 참여할 모든 멤버가 앱에 입력할 값:");
+        println!("     서버 주소 : {bind}");
+        println!("     서버 지문 : {}\n", hex(&fp));
+        println!(
+            "※ 여러 대에서 쓰려면 --bind 를 서버 PC 의 사내망 IP 로:  sb-server --init --bind 192.168.0.10:45871"
+        );
         return Ok(());
     }
 

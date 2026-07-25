@@ -34,9 +34,10 @@
 # 코어 크레이트 테스트 (95개)
 cargo test --workspace
 
-# 서버 실행
-cargo run -p sb-server -- --gen-token          # setup 토큰/해시 생성
-cargo run -p sb-server -- --config server.toml # 서버 기동 (지문 출력됨)
+# 서버 실행 (설정 방법: docs/SERVER.md)
+cargo run -p sb-server -- --init               # server.toml + 토큰 + 지문 한 번에 생성
+cargo run -p sb-server -- --config server.toml # 서버 기동
+# 여러 대: cargo run -p sb-server -- --init --bind 192.168.0.10:45871
 
 # 데스크톱 앱 (Tauri CLI 필요: cargo install tauri-cli --version '^2')
 pnpm install
@@ -44,13 +45,7 @@ cargo tauri dev      # 개발 실행
 cargo tauri build    # 배포 번들
 ```
 
-### server.toml 예시
-
-```toml
-bind_addr = "192.168.1.10:45871"       # LAN 주소여야 함
-data_dir  = "/var/lib/shareboard"
-setup_token_hash = "<sb-server --gen-token 으로 생성한 hex>"
-```
+서버 설정·앱 연결·systemd 등록·문제 해결은 **[docs/SERVER.md](docs/SERVER.md)** 참고.
 
 ## 아이콘
 
