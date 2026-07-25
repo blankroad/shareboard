@@ -14,9 +14,7 @@ use sb_proto::log::{GrantCert, LogEntry};
 use sb_proto::{DeviceId, Epoch, EpochReason};
 
 use crate::hash::{blake3_hash, sha256};
-use crate::identity::{
-    sign_with, verify_with_spki, Identity, IdentityPublic, DOMAIN_GRANT, DOMAIN_LOG,
-};
+use crate::identity::{sign_with, verify_with_spki, Identity, IdentityPublic, DOMAIN_GRANT, DOMAIN_LOG};
 use crate::CryptoError;
 
 const DAY_MS: u64 = 24 * 3600 * 1000;
@@ -165,7 +163,14 @@ pub fn build_add(
 
 /// Remove 엔트리 — 잔존 멤버 서명 (§4.4).
 pub fn build_remove(id: &Identity, prev_hash: [u8; 32], seq: u64, target: DeviceId, ts: u64) -> LogEntry {
-    let mut e = LogEntry::Remove { prev_hash, seq, target, ts, by: id.device_id(), sig: Vec::new() };
+    let mut e = LogEntry::Remove {
+        prev_hash,
+        seq,
+        target,
+        ts,
+        by: id.device_id(),
+        sig: Vec::new(),
+    };
     let sig = id.sign(DOMAIN_LOG, &entry_sign_view(&e));
     if let LogEntry::Remove { sig: s, .. } = &mut e {
         *s = sig;
@@ -204,9 +209,21 @@ pub fn build_epoch(
 }
 
 /// RotateKem 엔트리 — 본인 서명 (§4.1 축 B).
-pub fn build_rotate_kem(id: &Identity, prev_hash: [u8; 32], seq: u64, new_kem_pk: [u8; 32], ts: u64) -> LogEntry {
-    let mut e =
-        LogEntry::RotateKem { prev_hash, seq, subject: id.device_id(), new_kem_pk, ts, sig: Vec::new() };
+pub fn build_rotate_kem(
+    id: &Identity,
+    prev_hash: [u8; 32],
+    seq: u64,
+    new_kem_pk: [u8; 32],
+    ts: u64,
+) -> LogEntry {
+    let mut e = LogEntry::RotateKem {
+        prev_hash,
+        seq,
+        subject: id.device_id(),
+        new_kem_pk,
+        ts,
+        sig: Vec::new(),
+    };
     let sig = id.sign(DOMAIN_LOG, &entry_sign_view(&e));
     if let LogEntry::RotateKem { sig: s, .. } = &mut e {
         *s = sig;
@@ -221,12 +238,20 @@ pub fn build_rotate_kem(id: &Identity, prev_hash: [u8; 32], seq: u64, new_kem_pk
 /// `now_ms == 0` 이면 grant 만료 검사(③)를 생략(테스트/오프라인 재검증용).
 /// 검증 실패 엔트리를 만나면 그 지점에서 멈추고 마지막 유효 head 기준 상태를 반환한다.
 pub fn verify_chain(entries: &[Vec<u8>], now_ms: u64) -> Result<VerifiedLog, CryptoError> {
-    let first = entries.first().ok_or_else(|| CryptoError::Log("빈 로그".into()))?;
+    let first = entries
+        .first()
+        .ok_or_else(|| CryptoError::Log("빈 로그".into()))?;
     let g: LogEntry =
         ciborium::from_reader(&first[..]).map_err(|_| CryptoError::Log("Genesis 디코드 실패".into()))?;
 
     let (workspace_id, workspace_name, creator, mut members) = match &g {
-        LogEntry::Genesis { workspace_name, creator_spki, creator_kem_pk, sig, .. } => {
+        LogEntry::Genesis {
+            workspace_name,
+            creator_spki,
+            creator_kem_pk,
+            sig,
+            ..
+        } => {
             if !verify_with_spki(creator_spki, DOMAIN_LOG, &entry_sign_view(&g), sig) {
                 return Err(CryptoError::Log("Genesis 서명 무효".into()));
             }
@@ -234,7 +259,11 @@ pub fn verify_chain(entries: &[Vec<u8>], now_ms: u64) -> Result<VerifiedLog, Cry
             let mut m = BTreeMap::new();
             m.insert(
                 creator,
-                MemberInfo { device_id: creator, spki_der: creator_spki.clone(), kem_pk: *creator_kem_pk },
+                MemberInfo {
+                    device_id: creator,
+                    spki_der: creator_spki.clone(),
+                    kem_pk: *creator_kem_pk,
+                },
             );
             (entry_hash(first), workspace_name.clone(), creator, m)
         }
@@ -264,17 +293,26 @@ pub fn verify_chain(entries: &[Vec<u8>], now_ms: u64) -> Result<VerifiedLog, Cry
         match &entry {
             LogEntry::Genesis { .. } => break 'chain, // 중복 Genesis 금지
 
-            LogEntry::Add { grant_cert, subject_spki, subject_kem_pk, sig, .. } => {
+            LogEntry::Add {
+                grant_cert,
+                subject_spki,
+                subject_kem_pk,
+                sig,
+                ..
+            } => {
                 // sponsor 는 현 멤버여야
-                let Some(sponsor_spki) = members.get(&grant_cert.sponsor).map(|m| m.spki_der.clone())
-                else {
+                let Some(sponsor_spki) = members.get(&grant_cert.sponsor).map(|m| m.spki_der.clone()) else {
                     break 'chain;
                 };
                 if grant_cert.workspace_id != workspace_id {
                     break 'chain;
                 }
-                if !verify_with_spki(&sponsor_spki, DOMAIN_GRANT, &grant_sign_view(grant_cert), &grant_cert.sig)
-                {
+                if !verify_with_spki(
+                    &sponsor_spki,
+                    DOMAIN_GRANT,
+                    &grant_sign_view(grant_cert),
+                    &grant_cert.sig,
+                ) {
                     break 'chain;
                 }
                 // ③ 만료
@@ -292,7 +330,11 @@ pub fn verify_chain(entries: &[Vec<u8>], now_ms: u64) -> Result<VerifiedLog, Cry
                 let did = sha256(subject_spki);
                 members.insert(
                     did,
-                    MemberInfo { device_id: did, spki_der: subject_spki.clone(), kem_pk: *subject_kem_pk },
+                    MemberInfo {
+                        device_id: did,
+                        spki_der: subject_spki.clone(),
+                        kem_pk: *subject_kem_pk,
+                    },
                 );
             }
 
@@ -306,7 +348,13 @@ pub fn verify_chain(entries: &[Vec<u8>], now_ms: u64) -> Result<VerifiedLog, Cry
                 members.remove(target);
             }
 
-            LogEntry::Epoch { epoch_no, rotator, member_set_hash: msh, sig, .. } => {
+            LogEntry::Epoch {
+                epoch_no,
+                rotator,
+                member_set_hash: msh,
+                sig,
+                ..
+            } => {
                 let Some(rot_spki) = members.get(rotator).map(|m| m.spki_der.clone()) else {
                     break 'chain;
                 };
@@ -322,7 +370,12 @@ pub fn verify_chain(entries: &[Vec<u8>], now_ms: u64) -> Result<VerifiedLog, Cry
                 epoch = *epoch_no;
             }
 
-            LogEntry::RotateKem { subject, new_kem_pk, sig, .. } => {
+            LogEntry::RotateKem {
+                subject,
+                new_kem_pk,
+                sig,
+                ..
+            } => {
                 let Some(sub_spki) = members.get(subject).map(|m| m.spki_der.clone()) else {
                     break 'chain;
                 };
@@ -448,8 +501,16 @@ mod tests {
         let (founder, _joiner, mut chain) = build_two_member_chain();
         let v = verify_chain(&chain, 0).unwrap();
         // 잘못된 member_set_hash 로 Epoch 작성 → 규칙 ⑥ 위반 → 거부.
-        let epoch =
-            build_epoch(&founder, v.head_hash, 2, 1, EpochReason::Manual, [0xaa; 32], [0u8; 32], 1300);
+        let epoch = build_epoch(
+            &founder,
+            v.head_hash,
+            2,
+            1,
+            EpochReason::Manual,
+            [0xaa; 32],
+            [0u8; 32],
+            1300,
+        );
         chain.push(entry_bytes(&epoch));
         let v2 = verify_chain(&chain, 0).unwrap();
         assert_eq!(v2.accepted, 2, "잘못된 Epoch 는 채택 안 됨");

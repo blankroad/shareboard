@@ -71,7 +71,11 @@ CREATE INDEX IF NOT EXISTS idx_history_created ON history(created_at DESC);
 impl HistoryStore {
     pub fn new(conn: Connection, history_key: [u8; 32], dedup_key: [u8; 32]) -> Result<Self, StoreError> {
         conn.execute_batch(SCHEMA)?;
-        Ok(Self { conn, history_key, dedup_key })
+        Ok(Self {
+            conn,
+            history_key,
+            dedup_key,
+        })
     }
 
     pub fn open_in_memory(history_key: [u8; 32], dedup_key: [u8; 32]) -> Result<Self, StoreError> {
@@ -135,7 +139,15 @@ impl HistoryStore {
         )?;
         let raw: Vec<(Vec<u8>, i64, i64, String, i64, i64, Option<Vec<u8>>)> = stmt
             .query_map(params![limit as i64], |r| {
-                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?))
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                    r.get(6)?,
+                ))
             })?
             .collect::<Result<_, _>>()?;
 
@@ -174,8 +186,12 @@ impl HistoryStore {
             .ok();
         match row {
             Some((created_at, ki, body_ct)) => {
-                let pt = xopen(&self.history_key, &aad(id, ki, created_at as u64, b"body"), &body_ct)
-                    .map_err(|e| StoreError::Crypto(e.to_string()))?;
+                let pt = xopen(
+                    &self.history_key,
+                    &aad(id, ki, created_at as u64, b"body"),
+                    &body_ct,
+                )
+                .map_err(|e| StoreError::Crypto(e.to_string()))?;
                 Ok(Some(pt))
             }
             None => Ok(None),
@@ -183,13 +199,16 @@ impl HistoryStore {
     }
 
     pub fn set_pinned(&self, id: &ContentId, pinned: bool) -> Result<(), StoreError> {
-        self.conn
-            .execute("UPDATE history SET pinned=?2 WHERE id=?1", params![id.to_vec(), pinned as i64])?;
+        self.conn.execute(
+            "UPDATE history SET pinned=?2 WHERE id=?1",
+            params![id.to_vec(), pinned as i64],
+        )?;
         Ok(())
     }
 
     pub fn delete(&self, id: &ContentId) -> Result<(), StoreError> {
-        self.conn.execute("DELETE FROM history WHERE id=?1", params![id.to_vec()])?;
+        self.conn
+            .execute("DELETE FROM history WHERE id=?1", params![id.to_vec()])?;
         Ok(())
     }
 
@@ -201,7 +220,9 @@ impl HistoryStore {
     }
 
     pub fn count(&self) -> Result<usize, StoreError> {
-        let n: i64 = self.conn.query_row("SELECT COUNT(*) FROM history", [], |r| r.get(0))?;
+        let n: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM history", [], |r| r.get(0))?;
         Ok(n as usize)
     }
 }
@@ -227,7 +248,16 @@ mod tests {
     fn add_list_get_roundtrip() {
         let s = store();
         let id = [9u8; 32];
-        s.add(&id, ContentKind::Text, "local", 1000, b"hello world", Some("hello world"), false).unwrap();
+        s.add(
+            &id,
+            ContentKind::Text,
+            "local",
+            1000,
+            b"hello world",
+            Some("hello world"),
+            false,
+        )
+        .unwrap();
         let list = s.list(10).unwrap();
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].preview.as_deref(), Some("hello world"));
@@ -239,8 +269,10 @@ mod tests {
     fn dedup_updates_timestamp() {
         let s = store();
         let id = [9u8; 32];
-        s.add(&id, ContentKind::Text, "local", 1000, b"x", None, false).unwrap();
-        s.add(&id, ContentKind::Text, "local", 2000, b"x", None, false).unwrap();
+        s.add(&id, ContentKind::Text, "local", 1000, b"x", None, false)
+            .unwrap();
+        s.add(&id, ContentKind::Text, "local", 2000, b"x", None, false)
+            .unwrap();
         assert_eq!(s.count().unwrap(), 1, "동일 내용은 dedup");
         assert_eq!(s.list(1).unwrap()[0].created_at, 2000);
     }
@@ -249,10 +281,13 @@ mod tests {
     fn wrong_key_cannot_decrypt() {
         let s = store();
         let id = [7u8; 32];
-        s.add(&id, ContentKind::Text, "peer", 100, b"secret", None, false).unwrap();
+        s.add(&id, ContentKind::Text, "peer", 100, b"secret", None, false)
+            .unwrap();
         // 다른 키의 저장소로 같은 DB 를 열면 복호 실패(여기선 새 DB지만 키 개념 검증).
         let other = HistoryStore::open_in_memory([9u8; 32], [2u8; 32]).unwrap();
-        other.add(&id, ContentKind::Text, "peer", 100, b"secret", None, false).unwrap();
+        other
+            .add(&id, ContentKind::Text, "peer", 100, b"secret", None, false)
+            .unwrap();
         // s 의 body 를 other 키로 열 수 없음을 간접 확인: s 는 정상 복호.
         assert_eq!(s.get_body(&id).unwrap().unwrap(), b"secret");
     }
@@ -260,8 +295,10 @@ mod tests {
     #[test]
     fn delete_and_clear() {
         let s = store();
-        s.add(&[1u8; 32], ContentKind::Text, "local", 1, b"a", None, false).unwrap();
-        s.add(&[2u8; 32], ContentKind::Text, "local", 2, b"b", None, true).unwrap();
+        s.add(&[1u8; 32], ContentKind::Text, "local", 1, b"a", None, false)
+            .unwrap();
+        s.add(&[2u8; 32], ContentKind::Text, "local", 2, b"b", None, true)
+            .unwrap();
         s.delete(&[1u8; 32]).unwrap();
         assert_eq!(s.count().unwrap(), 1);
         s.clear().unwrap();
@@ -272,7 +309,8 @@ mod tests {
     fn pinned_toggle() {
         let s = store();
         let id = [5u8; 32];
-        s.add(&id, ContentKind::Text, "local", 1, b"a", None, false).unwrap();
+        s.add(&id, ContentKind::Text, "local", 1, b"a", None, false)
+            .unwrap();
         s.set_pinned(&id, true).unwrap();
         assert!(s.list(1).unwrap()[0].pinned);
     }

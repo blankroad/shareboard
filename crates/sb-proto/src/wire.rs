@@ -19,7 +19,10 @@ pub struct Envelope<M> {
 
 impl<M> Envelope<M> {
     pub fn new(msg: M) -> Self {
-        Self { v: crate::params::PROTO_MAX, msg }
+        Self {
+            v: crate::params::PROTO_MAX,
+            msg,
+        }
     }
 }
 
@@ -83,41 +86,86 @@ pub enum C2s {
 
     // ── Guest lane (미등록 cert — 아래 4종 외 수신 시 즉시 종료) ──
     /// 부트스트랩(§4.3.2): setup 토큰 + Genesis 바이트열.
-    ClaimWorkspace { token: String, genesis: Vec<u8> },
-    GetInviteBlob { locator: Locator },
+    ClaimWorkspace {
+        token: String,
+        genesis: Vec<u8>,
+    },
+    GetInviteBlob {
+        locator: Locator,
+    },
     /// Member lane에서도 tail 동기화에 사용.
-    GetLog { from_seq: u64 },
+    GetLog {
+        from_seq: u64,
+    },
     /// 저장 바이트열 그대로. Guest는 Add만, Member는 Remove/Epoch/RotateKem도.
-    AppendEntry { entry: Vec<u8> },
+    AppendEntry {
+        entry: Vec<u8>,
+    },
 
     // ── 초대 관리 (Member) ──
     /// blob ≤ 4KiB, TTL ≤ 24h.
-    PutInvite { locator: Locator, blob: Vec<u8>, ttl_s: u32 },
-    RevokeInvite { locator: Locator },
+    PutInvite {
+        locator: Locator,
+        blob: Vec<u8>,
+        ttl_s: u32,
+    },
+    RevokeInvite {
+        locator: Locator,
+    },
 
     // ── 키 배포 (Member) ──
-    PutKeyUpdate { updates: Vec<KeyUpdate> },
+    PutKeyUpdate {
+        updates: Vec<KeyUpdate>,
+    },
 
     // ── 동기화 (Member) ──
     /// e2e = seal(k_sig, SignalBody, aad = hdr‖origin).
-    ClipSignal { hdr: SignalHdr, e2e: Vec<u8> },
+    ClipSignal {
+        hdr: SignalHdr,
+        e2e: Vec<u8>,
+    },
     /// 서버가 소스(캐시/원본) 결정.
-    ContentRequest { id: ContentId, epoch: Epoch },
+    ContentRequest {
+        id: ContentId,
+        epoch: Epoch,
+    },
     /// ContentPull 응답.
-    ContentBegin { id: ContentId, ct_size: u64, chunk_count: u32, chunk_size: u32 },
+    ContentBegin {
+        id: ContentId,
+        ct_size: u64,
+        chunk_count: u32,
+        chunk_size: u32,
+    },
     /// 암호문 조각.
-    ContentChunk { id: ContentId, index: u32, data: Vec<u8> },
-    ContentAbort { id: ContentId, reason: AbortReason },
+    ContentChunk {
+        id: ContentId,
+        index: u32,
+        data: Vec<u8>,
+    },
+    ContentAbort {
+        id: ContentId,
+        reason: AbortReason,
+    },
     /// origin의 Pull 거절.
-    ContentReject { id: ContentId, reason: RejectReason },
+    ContentReject {
+        id: ContentId,
+        reason: RejectReason,
+    },
 
     // ── 기타 ──
     /// GK 봉인 {name, platform, log_head_hash, seq, epoch, ts}.
-    SetProfile { epoch: Epoch, e2e: Vec<u8> },
+    SetProfile {
+        epoch: Epoch,
+        e2e: Vec<u8>,
+    },
     /// 자발 탈퇴(잔존 멤버 UI가 회전 권고).
     Leave,
-    Ping { nonce: u64 },
-    Bye { reason: ByeReason },
+    Ping {
+        nonce: u64,
+    },
+    Bye {
+        reason: ByeReason,
+    },
 }
 
 // ───────────────────────── 서버 → 클라 ─────────────────────────
@@ -127,34 +175,81 @@ pub enum S2c {
 
     // ── Guest 응답 ──
     /// None = 미존재/만료(구분 없음 — 정보 최소화).
-    InviteBlob { blob: Option<Vec<u8>> },
-    LogEntries { entries: Vec<Vec<u8>>, done: bool },
-    AppendAck { seq: u64, head_hash: [u8; 32] },
-    AppendReject { reason: AppendRejectReason },
+    InviteBlob {
+        blob: Option<Vec<u8>>,
+    },
+    LogEntries {
+        entries: Vec<Vec<u8>>,
+        done: bool,
+    },
+    AppendAck {
+        seq: u64,
+        head_hash: [u8; 32],
+    },
+    AppendReject {
+        reason: AppendRejectReason,
+    },
 
     // ── 동기화 ──
     /// origin은 서버가 인증 세션에서 스탬프 — 발신자에게는 미반송.
-    SignalFanout { origin: DeviceId, hdr: SignalHdr, e2e: Vec<u8> },
+    SignalFanout {
+        origin: DeviceId,
+        hdr: SignalHdr,
+        e2e: Vec<u8>,
+    },
     /// → origin: 업로드 요청.
-    ContentPull { id: ContentId },
-    ContentBegin { id: ContentId, ct_size: u64, chunk_count: u32, chunk_size: u32 },
-    ContentChunk { id: ContentId, index: u32, data: Vec<u8> },
-    ContentReject { id: ContentId, reason: RejectReason },
-    ContentAbort { id: ContentId, reason: AbortReason },
+    ContentPull {
+        id: ContentId,
+    },
+    ContentBegin {
+        id: ContentId,
+        ct_size: u64,
+        chunk_count: u32,
+        chunk_size: u32,
+    },
+    ContentChunk {
+        id: ContentId,
+        index: u32,
+        data: Vec<u8>,
+    },
+    ContentReject {
+        id: ContentId,
+        reason: RejectReason,
+    },
+    ContentAbort {
+        id: ContentId,
+        reason: AbortReason,
+    },
 
     // ── 멤버십/키/presence ──
     /// 신규 엔트리 실시간 전파(체인 검증은 클라).
-    LogAppended { entry: Vec<u8>, seq: u64 },
+    LogAppended {
+        entry: Vec<u8>,
+        seq: u64,
+    },
     /// 본인 몫 wrap 즉시 push.
-    KeyUpdatePush { wrap: Vec<u8> },
-    Presence { device_id: DeviceId, online: bool, enc_profile: Option<Vec<u8>> },
+    KeyUpdatePush {
+        wrap: Vec<u8>,
+    },
+    Presence {
+        device_id: DeviceId,
+        online: bool,
+        enc_profile: Option<Vec<u8>>,
+    },
     /// 본인 제거 "힌트"(인증 안 됨) — §5.4. 키 파기·crypto-erase 금지.
     Revoked,
 
     // ── 기타 ──
-    Pong { nonce: u64 },
-    Error { code: ErrorCode, detail: String },
-    Bye { reason: ByeReason },
+    Pong {
+        nonce: u64,
+    },
+    Error {
+        code: ErrorCode,
+        detail: String,
+    },
+    Bye {
+        reason: ByeReason,
+    },
 }
 
 /// CBOR 인코딩. 프레이밍 계층(LengthDelimitedCodec)에 넣기 전 payload 바이트.

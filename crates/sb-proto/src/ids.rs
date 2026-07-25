@@ -46,7 +46,11 @@ pub struct LwwKey {
 
 impl LwwKey {
     pub fn new(lamport: Lamport, wall_ts_ms: u64, origin: DeviceId) -> Self {
-        Self { lamport, wall_ts_ms, origin }
+        Self {
+            lamport,
+            wall_ts_ms,
+            origin,
+        }
     }
 }
 

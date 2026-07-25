@@ -26,8 +26,8 @@ fn default_health() -> Option<String> {
 
 impl ServerConfig {
     pub fn load(path: &str) -> anyhow::Result<Self> {
-        let s = std::fs::read_to_string(path)
-            .map_err(|e| anyhow::anyhow!("설정 파일 읽기 실패 {path}: {e}"))?;
+        let s =
+            std::fs::read_to_string(path).map_err(|e| anyhow::anyhow!("설정 파일 읽기 실패 {path}: {e}"))?;
         Ok(toml::from_str(&s)?)
     }
 

@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use sb_proto::params::{MAX_CONTENT_SIZE_DEFAULT, DEFAULT_SERVER_PORT};
+use sb_proto::params::{DEFAULT_SERVER_PORT, MAX_CONTENT_SIZE_DEFAULT};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {

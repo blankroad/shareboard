@@ -77,7 +77,12 @@ impl Identity {
         let vk = VerifyingKey::from(&signing);
         let spki_der = vk.to_public_key_der().expect("p256 SPKI").as_bytes().to_vec();
         let device_id = sha256(&spki_der);
-        Self { signing, kem, spki_der, device_id }
+        Self {
+            signing,
+            kem,
+            spki_der,
+            device_id,
+        }
     }
 
     pub fn device_id(&self) -> DeviceId {
@@ -114,7 +119,12 @@ impl Identity {
 
     /// 서명키 PKCS#8 DER (keychain 저장용). 사용 후 즉시 zeroize 할 것.
     pub fn signing_pkcs8_der(&self) -> Result<Vec<u8>, CryptoError> {
-        Ok(self.signing.to_pkcs8_der().map_err(|_| CryptoError::KeyEncoding)?.as_bytes().to_vec())
+        Ok(self
+            .signing
+            .to_pkcs8_der()
+            .map_err(|_| CryptoError::KeyEncoding)?
+            .as_bytes()
+            .to_vec())
     }
 
     /// KEM 비밀키 원바이트 (keychain 저장용).
@@ -124,8 +134,7 @@ impl Identity {
 
     /// keychain에서 복원.
     pub fn from_parts(signing_pkcs8_der: &[u8], kem_secret: &[u8; 32]) -> Result<Self, CryptoError> {
-        let signing =
-            SigningKey::from_pkcs8_der(signing_pkcs8_der).map_err(|_| CryptoError::KeyEncoding)?;
+        let signing = SigningKey::from_pkcs8_der(signing_pkcs8_der).map_err(|_| CryptoError::KeyEncoding)?;
         let kem = StaticSecret::from(*kem_secret);
         Ok(Self::from_keys(signing, kem))
     }
@@ -135,9 +144,11 @@ impl Identity {
     /// 반환 `(cert_der, key_pkcs8_der)`. cert의 키 = 이 identity의 P-256 키이므로
     /// 지문(SHA-256 SPKI)이 device_id와 일치한다.
     pub fn tls_material(&self) -> Result<(Vec<u8>, Vec<u8>), CryptoError> {
-        let pkcs8 = self.signing.to_pkcs8_der().map_err(|_| CryptoError::KeyEncoding)?;
-        let key_pair =
-            rcgen::KeyPair::try_from(pkcs8.as_bytes()).map_err(|_| CryptoError::CertGen)?;
+        let pkcs8 = self
+            .signing
+            .to_pkcs8_der()
+            .map_err(|_| CryptoError::KeyEncoding)?;
+        let key_pair = rcgen::KeyPair::try_from(pkcs8.as_bytes()).map_err(|_| CryptoError::CertGen)?;
         let params = rcgen::CertificateParams::new(vec!["shareboard".to_string()])
             .map_err(|_| CryptoError::CertGen)?;
         let cert = params.self_signed(&key_pair).map_err(|_| CryptoError::CertGen)?;

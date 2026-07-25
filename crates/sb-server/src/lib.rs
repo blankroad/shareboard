@@ -23,8 +23,8 @@ use sb_crypto::verify_chain;
 use sb_net::{cert_fingerprint, framed_codec};
 use sb_proto::params::HEAD_CACHE_DEPTH;
 use sb_proto::{
-    decode_env, encode_env, AppendRejectReason, ByeReason, ContentId, DeviceId, Epoch, ErrorCode,
-    LogEntry, RejectReason, SignalHdr, Welcome, C2s, S2c,
+    decode_env, encode_env, AppendRejectReason, ByeReason, C2s, ContentId, DeviceId, Epoch, ErrorCode,
+    LogEntry, RejectReason, S2c, SignalHdr, Welcome,
 };
 
 type Tx = mpsc::UnboundedSender<S2c>;
@@ -103,7 +103,11 @@ impl Shared {
                 &g,
                 &roster,
                 &dev,
-                S2c::Presence { device_id: dev, online: true, enc_profile: profile },
+                S2c::Presence {
+                    device_id: dev,
+                    online: true,
+                    enc_profile: profile,
+                },
             );
         }
     }
@@ -116,7 +120,11 @@ impl Shared {
             &g,
             &roster,
             &dev,
-            S2c::Presence { device_id: dev, online: false, enc_profile: None },
+            S2c::Presence {
+                device_id: dev,
+                online: false,
+                enc_profile: None,
+            },
         );
     }
 
@@ -129,17 +137,34 @@ impl Shared {
         // Guest lane 허용 메시지 화이트리스트 (§4.5).
         let guest_ok = matches!(
             msg,
-            C2s::ClaimWorkspace { .. } | C2s::GetInviteBlob { .. } | C2s::GetLog { .. } | C2s::AppendEntry { .. }
+            C2s::ClaimWorkspace { .. }
+                | C2s::GetInviteBlob { .. }
+                | C2s::GetLog { .. }
+                | C2s::AppendEntry { .. }
         );
         if !is_member && !guest_ok {
-            send_to(&g, &dev, S2c::Error { code: ErrorCode::NotMember, detail: "member 아님".into() });
+            send_to(
+                &g,
+                &dev,
+                S2c::Error {
+                    code: ErrorCode::NotMember,
+                    detail: "member 아님".into(),
+                },
+            );
             return true;
         }
 
         match msg {
             C2s::Hello(h) => {
                 if h.proto_max < sb_proto::params::PROTO_MIN || h.proto_min > sb_proto::params::PROTO_MAX {
-                    send_to(&g, &dev, S2c::Error { code: ErrorCode::VersionIncompatible, detail: "version".into() });
+                    send_to(
+                        &g,
+                        &dev,
+                        S2c::Error {
+                            code: ErrorCode::VersionIncompatible,
+                            detail: "version".into(),
+                        },
+                    );
                     return false;
                 }
                 let (from_seq, from_hash) = h.log_head;
@@ -171,7 +196,16 @@ impl Shared {
                 while g.head_cache.len() > HEAD_CACHE_DEPTH {
                     g.head_cache.pop_front();
                 }
-                broadcast_members(&g, &roster, &dev, S2c::SignalFanout { origin: dev, hdr, e2e });
+                broadcast_members(
+                    &g,
+                    &roster,
+                    &dev,
+                    S2c::SignalFanout {
+                        origin: dev,
+                        hdr,
+                        e2e,
+                    },
+                );
             }
 
             C2s::ContentRequest { id, .. } => {
@@ -179,12 +213,33 @@ impl Shared {
                     g.pending_pull.insert(id, dev);
                     send_to(&g, &origin, S2c::ContentPull { id });
                 } else {
-                    send_to(&g, &dev, S2c::ContentReject { id, reason: RejectReason::Gone });
+                    send_to(
+                        &g,
+                        &dev,
+                        S2c::ContentReject {
+                            id,
+                            reason: RejectReason::Gone,
+                        },
+                    );
                 }
             }
-            C2s::ContentBegin { id, ct_size, chunk_count, chunk_size } => {
+            C2s::ContentBegin {
+                id,
+                ct_size,
+                chunk_count,
+                chunk_size,
+            } => {
                 if let Some(req) = g.pending_pull.get(&id).copied() {
-                    send_to(&g, &req, S2c::ContentBegin { id, ct_size, chunk_count, chunk_size });
+                    send_to(
+                        &g,
+                        &req,
+                        S2c::ContentBegin {
+                            id,
+                            ct_size,
+                            chunk_count,
+                            chunk_size,
+                        },
+                    );
                 }
             }
             C2s::ContentChunk { id, index, data } => {
@@ -205,12 +260,26 @@ impl Shared {
 
             C2s::ClaimWorkspace { token, genesis } => {
                 if g.claimed {
-                    send_to(&g, &dev, S2c::Error { code: ErrorCode::ProtocolError, detail: "이미 클레임됨".into() });
+                    send_to(
+                        &g,
+                        &dev,
+                        S2c::Error {
+                            code: ErrorCode::ProtocolError,
+                            detail: "이미 클레임됨".into(),
+                        },
+                    );
                     return true;
                 }
                 if let Some(expected) = g.setup_token_hash {
                     if sha256(token.as_bytes()) != expected {
-                        send_to(&g, &dev, S2c::Error { code: ErrorCode::NotMember, detail: "토큰 불일치".into() });
+                        send_to(
+                            &g,
+                            &dev,
+                            S2c::Error {
+                                code: ErrorCode::NotMember,
+                                detail: "토큰 불일치".into(),
+                            },
+                        );
                         return false;
                     }
                 }
@@ -219,10 +288,24 @@ impl Shared {
                         g.log = vec![genesis];
                         g.claimed = true;
                         g.epoch = 0;
-                        send_to(&g, &dev, S2c::AppendAck { seq: 0, head_hash: v.head_hash });
+                        send_to(
+                            &g,
+                            &dev,
+                            S2c::AppendAck {
+                                seq: 0,
+                                head_hash: v.head_hash,
+                            },
+                        );
                     }
                     Err(_) => {
-                        send_to(&g, &dev, S2c::Error { code: ErrorCode::ProtocolError, detail: "genesis 무효".into() });
+                        send_to(
+                            &g,
+                            &dev,
+                            S2c::Error {
+                                code: ErrorCode::ProtocolError,
+                                detail: "genesis 무효".into(),
+                            },
+                        );
                         return false;
                     }
                 }
@@ -236,7 +319,13 @@ impl Shared {
             C2s::AppendEntry { entry } => {
                 // 서명 검증 없는 blind 모델 — 멤버 append 만 수락(Guest-Add admission 바인딩은 후속).
                 if !is_member {
-                    send_to(&g, &dev, S2c::AppendReject { reason: AppendRejectReason::NotAuthorized });
+                    send_to(
+                        &g,
+                        &dev,
+                        S2c::AppendReject {
+                            reason: AppendRejectReason::NotAuthorized,
+                        },
+                    );
                     return true;
                 }
                 let mut trial = g.log.clone();
@@ -255,7 +344,13 @@ impl Shared {
                         broadcast_members(&g, &new_roster, &dev, S2c::LogAppended { entry, seq });
                     }
                     _ => {
-                        send_to(&g, &dev, S2c::AppendReject { reason: AppendRejectReason::Conflict });
+                        send_to(
+                            &g,
+                            &dev,
+                            S2c::AppendReject {
+                                reason: AppendRejectReason::Conflict,
+                            },
+                        );
                     }
                 }
             }
@@ -287,7 +382,11 @@ impl Shared {
                     &g,
                     &roster,
                     &dev,
-                    S2c::Presence { device_id: dev, online: true, enc_profile: Some(e2e) },
+                    S2c::Presence {
+                        device_id: dev,
+                        online: true,
+                        enc_profile: Some(e2e),
+                    },
                 );
             }
 
@@ -326,7 +425,9 @@ async fn handle_conn(tcp: TcpStream, acceptor: TlsAcceptor, shared: Arc<Shared>)
     let tls = acceptor.accept(tcp).await?;
     let dev = {
         let (_io, conn) = tls.get_ref();
-        let certs = conn.peer_certificates().ok_or_else(|| anyhow::anyhow!("클라 cert 없음"))?;
+        let certs = conn
+            .peer_certificates()
+            .ok_or_else(|| anyhow::anyhow!("클라 cert 없음"))?;
         let first = certs.first().ok_or_else(|| anyhow::anyhow!("빈 cert 체인"))?;
         cert_fingerprint(first)
     };
@@ -429,9 +530,12 @@ mod integration {
         // A 접속 → 워크스페이스 클레임.
         let (genesis, wid) = wslog::build_genesis(&a, "eng-team", 1);
         let mut ca = sb_net::connect(addr, server_fp, &a).await.unwrap();
-        ca.send(C2s::ClaimWorkspace { token: "setup-token".into(), genesis: wslog::entry_bytes(&genesis) })
-            .await
-            .unwrap();
+        ca.send(C2s::ClaimWorkspace {
+            token: "setup-token".into(),
+            genesis: wslog::entry_bytes(&genesis),
+        })
+        .await
+        .unwrap();
         assert!(matches!(ca.recv().await.unwrap(), S2c::AppendAck { seq: 0, .. }));
 
         // A 가 B 를 초대(grant) → Add 엔트리 append.
@@ -439,7 +543,11 @@ mod integration {
         let gc = wslog::build_grant_cert(&a, grant.pk_der.clone(), 10_000, wid);
         let head = wslog::entry_hash(&wslog::entry_bytes(&genesis));
         let add = wslog::build_add(&grant.sk, gc, &b.public(), head, 1, 2);
-        ca.send(C2s::AppendEntry { entry: wslog::entry_bytes(&add) }).await.unwrap();
+        ca.send(C2s::AppendEntry {
+            entry: wslog::entry_bytes(&add),
+        })
+        .await
+        .unwrap();
         assert!(matches!(ca.recv().await.unwrap(), S2c::AppendAck { seq: 1, .. }));
 
         // 두 엔진에 동일 GK 주입(실제 배포는 wrap — sb-crypto 에서 별도 검증).
@@ -471,11 +579,19 @@ mod integration {
         }
 
         // A 가 클립보드 복사 → 신호 발행 → 서버 fanout → B 적용.
-        let sig = match ea.on_local_clipboard(ContentKind::Text, b"hello team", 1000).unwrap() {
+        let sig = match ea
+            .on_local_clipboard(ContentKind::Text, b"hello team", 1000)
+            .unwrap()
+        {
             LocalOutcome::Emit(s) => *s,
             o => panic!("Emit 기대: {o:?}"),
         };
-        ca.send(C2s::ClipSignal { hdr: sig.hdr.clone(), e2e: sig.e2e.clone() }).await.unwrap();
+        ca.send(C2s::ClipSignal {
+            hdr: sig.hdr.clone(),
+            e2e: sig.e2e.clone(),
+        })
+        .await
+        .unwrap();
 
         let (origin, hdr, e2e) = recv_fanout(&mut cb).await;
         assert_eq!(origin, a.device_id(), "서버가 origin 스탬프");
@@ -491,16 +607,27 @@ mod integration {
         );
 
         // 역방향: B 복사 → A 수신.
-        let sig2 = match eb.on_local_clipboard(ContentKind::Text, b"reply from B", 2000).unwrap() {
+        let sig2 = match eb
+            .on_local_clipboard(ContentKind::Text, b"reply from B", 2000)
+            .unwrap()
+        {
             LocalOutcome::Emit(s) => *s,
             o => panic!("Emit 기대: {o:?}"),
         };
-        cb.send(C2s::ClipSignal { hdr: sig2.hdr.clone(), e2e: sig2.e2e.clone() }).await.unwrap();
+        cb.send(C2s::ClipSignal {
+            hdr: sig2.hdr.clone(),
+            e2e: sig2.e2e.clone(),
+        })
+        .await
+        .unwrap();
         // A 는 Hello 를 보내지 않았지만 세션·멤버이므로 fanout 대상.
         let (origin, hdr, e2e) = recv_fanout(&mut ca).await;
         assert_eq!(origin, b.device_id());
         let dec = ea.on_remote_signal(origin, hdr, &e2e, 2001);
-        assert!(matches!(dec, RemoteDecision::ApplyInline { .. }), "A 가 B 의 클립보드를 적용");
+        assert!(
+            matches!(dec, RemoteDecision::ApplyInline { .. }),
+            "A 가 B 의 클립보드를 적용"
+        );
     }
 
     #[tokio::test]
@@ -527,7 +654,10 @@ mod integration {
         .await
         .unwrap();
         match c.recv().await.unwrap() {
-            S2c::Error { code: ErrorCode::NotMember, .. } => {}
+            S2c::Error {
+                code: ErrorCode::NotMember,
+                ..
+            } => {}
             other => panic!("NotMember 기대: {other:?}"),
         }
     }

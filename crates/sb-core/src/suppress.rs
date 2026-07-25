@@ -20,7 +20,11 @@ pub struct SuppressSet {
 
 impl SuppressSet {
     pub fn new() -> Self {
-        Self { grace: HashMap::new(), recent: VecDeque::new(), recent_cap: 16 }
+        Self {
+            grace: HashMap::new(),
+            recent: VecDeque::new(),
+            recent_cap: 16,
+        }
     }
 
     /// OS 클립보드에 원격 콘텐츠를 쓰기 직전 호출. 유예 창(2s) 등록.

@@ -73,8 +73,8 @@ pub fn canonicalize(input: &str) -> String {
 /// 코드 + workspace_id → (locator, K_seal). Argon2id 메모리 경도(§4.3.6).
 pub fn derive(code: &str, workspace_id: &[u8; 32]) -> Result<(Locator, Zeroizing<[u8; 32]>), CryptoError> {
     let canon = canonicalize(code);
-    let params = Params::new(ARGON2_MEM_KIB, ARGON2_TIME, ARGON2_PAR, Some(32))
-        .map_err(|_| CryptoError::Kdf)?;
+    let params =
+        Params::new(ARGON2_MEM_KIB, ARGON2_TIME, ARGON2_PAR, Some(32)).map_err(|_| CryptoError::Kdf)?;
     let a2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
     let mut k_code = Zeroizing::new([0u8; 32]);
     a2.hash_password_into(canon.as_bytes(), workspace_id, &mut *k_code)
@@ -82,9 +82,11 @@ pub fn derive(code: &str, workspace_id: &[u8; 32]) -> Result<(Locator, Zeroizing
 
     let hk = Hkdf::<Sha256>::new(None, &*k_code);
     let mut locator = [0u8; 32];
-    hk.expand(INFO_INV_LOCATOR, &mut locator).map_err(|_| CryptoError::Kdf)?;
+    hk.expand(INFO_INV_LOCATOR, &mut locator)
+        .map_err(|_| CryptoError::Kdf)?;
     let mut k_seal = Zeroizing::new([0u8; 32]);
-    hk.expand(INFO_INV_SEAL, &mut *k_seal).map_err(|_| CryptoError::Kdf)?;
+    hk.expand(INFO_INV_SEAL, &mut *k_seal)
+        .map_err(|_| CryptoError::Kdf)?;
     Ok((locator, k_seal))
 }
 
@@ -98,7 +100,11 @@ pub struct GrantKeypair {
 /// grant 키쌍 생성. `sk` 는 초대 blob 안에 봉인되어 전달, Add 확정 시 파기.
 pub fn generate_grant() -> GrantKeypair {
     let sk = SigningKey::random(&mut OsRng);
-    let pk_der = VerifyingKey::from(&sk).to_public_key_der().expect("spki").as_bytes().to_vec();
+    let pk_der = VerifyingKey::from(&sk)
+        .to_public_key_der()
+        .expect("spki")
+        .as_bytes()
+        .to_vec();
     GrantKeypair { sk, pk_der }
 }
 
@@ -149,8 +155,12 @@ pub fn make_invite(
     let (locator, k_seal) = derive(&code, &workspace_id)?;
     let grant = generate_grant();
     let grant_cert = crate::wslog::build_grant_cert(sponsor, grant.pk_der, expires_at, workspace_id);
-    let grant_sk_pkcs8 =
-        grant.sk.to_pkcs8_der().map_err(|_| CryptoError::KeyEncoding)?.as_bytes().to_vec();
+    let grant_sk_pkcs8 = grant
+        .sk
+        .to_pkcs8_der()
+        .map_err(|_| CryptoError::KeyEncoding)?
+        .as_bytes()
+        .to_vec();
     let secret = InviteSecret {
         grant_sk_pkcs8,
         grant_cert,
@@ -177,7 +187,14 @@ pub fn build_add_from_blob(
     let secret = open_blob(&k_seal, &workspace_id, blob)?;
     let grant_sk =
         SigningKey::from_pkcs8_der(&secret.grant_sk_pkcs8).map_err(|_| CryptoError::KeyEncoding)?;
-    let add = crate::wslog::build_add(&grant_sk, secret.grant_cert.clone(), joiner, prev_hash, seq, joined_at);
+    let add = crate::wslog::build_add(
+        &grant_sk,
+        secret.grant_cert.clone(),
+        joiner,
+        prev_hash,
+        seq,
+        joined_at,
+    );
     Ok((add, secret))
 }
 
@@ -224,11 +241,9 @@ mod tests {
         let head = wslog::entry_hash(&wslog::entry_bytes(&genesis));
 
         // 발급 → 조인.
-        let (code, _locator, blob) =
-            make_invite(&founder, wid, head, [0x55; 32], 999_999).unwrap();
+        let (code, _locator, blob) = make_invite(&founder, wid, head, [0x55; 32], 999_999).unwrap();
         let joiner = Identity::generate();
-        let (add, secret) =
-            build_add_from_blob(&code, wid, &blob, &joiner.public(), head, 1, 2).unwrap();
+        let (add, secret) = build_add_from_blob(&code, wid, &blob, &joiner.public(), head, 1, 2).unwrap();
         assert_eq!(secret.server_fp, [0x55; 32]);
 
         // 체인 검증: 창립자 + 조인자.

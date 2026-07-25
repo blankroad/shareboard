@@ -3,9 +3,9 @@
 
 use std::sync::Arc;
 
+use rustls::client::danger::HandshakeSignatureValid;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use rustls::server::danger::{ClientCertVerified, ClientCertVerifier};
-use rustls::client::danger::HandshakeSignatureValid;
 use rustls::{DigitallySignedStruct, DistinguishedName, ServerConfig, SignatureScheme};
 
 use sb_crypto::Identity;
@@ -18,7 +18,9 @@ pub struct AcceptAnyClient {
 
 impl AcceptAnyClient {
     pub fn new() -> Self {
-        Self { provider: Arc::new(rustls::crypto::ring::default_provider()) }
+        Self {
+            provider: Arc::new(rustls::crypto::ring::default_provider()),
+        }
     }
 }
 

@@ -35,7 +35,10 @@ pub struct PinnedServerVerifier {
 
 impl PinnedServerVerifier {
     pub fn new(fingerprint: [u8; 32]) -> Self {
-        Self { fingerprint, provider: Arc::new(rustls::crypto::ring::default_provider()) }
+        Self {
+            fingerprint,
+            provider: Arc::new(rustls::crypto::ring::default_provider()),
+        }
     }
 }
 
@@ -96,7 +99,9 @@ pub fn init_crypto() {
 
 /// 클라이언트 TLS 설정 — TLS 1.3 전용, 서버 지문 pinning + mTLS 장치 cert.
 pub fn client_config(identity: &Identity, server_fp: [u8; 32]) -> Result<Arc<ClientConfig>, NetError> {
-    let (cert_der, key_der) = identity.tls_material().map_err(|_| NetError::Tls("cert 생성".into()))?;
+    let (cert_der, key_der) = identity
+        .tls_material()
+        .map_err(|_| NetError::Tls("cert 생성".into()))?;
     let cert = CertificateDer::from(cert_der);
     let key = PrivateKeyDer::try_from(key_der).map_err(|_| NetError::Tls("키 파싱".into()))?;
 

@@ -21,14 +21,20 @@ impl GroupKey {
     pub fn generate(epoch: Epoch) -> Self {
         let mut key = [0u8; 32];
         OsRng.fill_bytes(&mut key);
-        let gk = Self { epoch, key: Zeroizing::new(key) };
+        let gk = Self {
+            epoch,
+            key: Zeroizing::new(key),
+        };
         key.zeroize();
         gk
     }
 
     /// 원바이트로부터 (wrap unwrap 결과 등). 호출자가 zeroize 책임.
     pub fn from_bytes(epoch: Epoch, key: [u8; 32]) -> Self {
-        Self { epoch, key: Zeroizing::new(key) }
+        Self {
+            epoch,
+            key: Zeroizing::new(key),
+        }
     }
 
     pub fn epoch(&self) -> Epoch {

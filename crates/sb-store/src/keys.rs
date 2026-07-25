@@ -57,7 +57,10 @@ impl<'a> KeyManager<'a> {
 
     /// 장치 신원 get-or-create.
     pub fn load_or_create_identity(&self) -> Result<Identity, StoreError> {
-        match (self.store.get(K_IDENTITY_SIGNING)?, self.store.get(K_IDENTITY_KEM)?) {
+        match (
+            self.store.get(K_IDENTITY_SIGNING)?,
+            self.store.get(K_IDENTITY_KEM)?,
+        ) {
             (Some(signing), Some(kem)) if kem.len() == 32 => {
                 let mut kem_arr = [0u8; 32];
                 kem_arr.copy_from_slice(&kem);
@@ -65,8 +68,9 @@ impl<'a> KeyManager<'a> {
             }
             _ => {
                 let id = Identity::generate();
-                let signing =
-                    id.signing_pkcs8_der().map_err(|e| StoreError::Crypto(e.to_string()))?;
+                let signing = id
+                    .signing_pkcs8_der()
+                    .map_err(|e| StoreError::Crypto(e.to_string()))?;
                 self.store.set(K_IDENTITY_SIGNING, &signing)?;
                 self.store.set(K_IDENTITY_KEM, &id.kem_secret_bytes())?;
                 Ok(id)

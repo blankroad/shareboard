@@ -59,8 +59,16 @@ impl FileKeyStore {
 
     fn path(&self, name: &str) -> PathBuf {
         // 이름 정규화 — 경로 구분자·상위 참조('.') 등을 전부 '_' 로. 영숫자/-/_ 만 통과.
-        let safe: String =
-            name.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).collect();
+        let safe: String = name
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect();
         self.dir.join(format!("{safe}.key"))
     }
 }
@@ -138,7 +146,10 @@ mod tests {
         store.set("../evil", b"x").unwrap();
         assert!(store.get("../evil").unwrap().is_some());
         assert!(dir.join("___evil.key").exists());
-        assert!(!dir.parent().unwrap().join("evil.key").exists(), "dir 밖으로 새지 않음");
+        assert!(
+            !dir.parent().unwrap().join("evil.key").exists(),
+            "dir 밖으로 새지 않음"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

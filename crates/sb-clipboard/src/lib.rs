@@ -20,6 +20,28 @@ use sb_proto::ContentKind;
 #[cfg(feature = "arboard-backend")]
 pub mod arboard_backend;
 
+#[cfg(target_os = "macos")]
+pub mod macos;
+
+#[cfg(all(target_os = "linux", feature = "wayland-backend"))]
+pub mod linux;
+
+/// 시스템 기본 watcher — macOS 는 changeCount 기반(D8), 그 외는 내용 지문 폴링.
+/// `arboard-backend` feature 필요(실제 OS I/O).
+#[cfg(feature = "arboard-backend")]
+pub fn system_watcher() -> Box<dyn ChangeWatcher + Send> {
+    #[cfg(target_os = "macos")]
+    {
+        Box::new(macos::ChangeCountWatcher::new(
+            arboard_backend::ArboardAccess::new(),
+        ))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Box::new(PollingWatcher::new(arboard_backend::ArboardAccess::new()))
+    }
+}
+
 /// 클립보드 콘텐츠 한 건.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClipContent {
@@ -30,10 +52,16 @@ pub struct ClipContent {
 
 impl ClipContent {
     pub fn text(s: impl Into<String>) -> Self {
-        Self { kind: ContentKind::Text, bytes: s.into().into_bytes() }
+        Self {
+            kind: ContentKind::Text,
+            bytes: s.into().into_bytes(),
+        }
     }
     pub fn image_png(bytes: Vec<u8>) -> Self {
-        Self { kind: ContentKind::ImagePng, bytes }
+        Self {
+            kind: ContentKind::ImagePng,
+            bytes,
+        }
     }
     /// 변경 감지용 지문(정확한 비교 대신 빠른 해시).
     pub fn fingerprint(&self) -> u64 {
@@ -64,10 +92,18 @@ pub trait ClipboardAccess {
     }
 }
 
-/// 변경 감지 인터페이스.
+/// 변경 감지 + 쓰기 인터페이스. 앱은 이 트레이트 객체만 다룬다(백엔드 교체 가능).
 pub trait ChangeWatcher {
     /// 마지막 관찰 이후 변경되었으면 새 콘텐츠, 아니면 None.
     fn poll(&mut self) -> Result<Option<ClipContent>, ClipError>;
+    /// OS 클립보드에 쓰기 + 지문/카운터 갱신(에코 재감지 억제).
+    fn write(&mut self, content: &ClipContent) -> Result<(), ClipError>;
+    /// 다음 폴에서 이 콘텐츠를 "이미 본 것"으로 취급.
+    fn note_written(&mut self, content: &ClipContent);
+    /// 현재 클립보드가 concealed(비밀번호 매니저 힌트)인가.
+    fn is_concealed(&self) -> bool {
+        false
+    }
 }
 
 /// 내용 지문 폴링 watcher (§6 D8 의 이식 가능한 baseline).
@@ -87,18 +123,6 @@ impl<A: ClipboardAccess> PollingWatcher<A> {
     pub fn access(&self) -> &A {
         &self.access
     }
-
-    /// 원격 콘텐츠를 OS 클립보드에 쓰면서 지문 갱신(에코 억제 보조).
-    pub fn write(&mut self, content: &ClipContent) -> Result<(), ClipError> {
-        self.access.write(content)?;
-        self.last = Some(content.fingerprint());
-        Ok(())
-    }
-
-    /// 다음 폴에서 이 지문을 "이미 본 것"으로 취급.
-    pub fn note_written(&mut self, content: &ClipContent) {
-        self.last = Some(content.fingerprint());
-    }
 }
 
 impl<A: ClipboardAccess> ChangeWatcher for PollingWatcher<A> {
@@ -115,6 +139,20 @@ impl<A: ClipboardAccess> ChangeWatcher for PollingWatcher<A> {
             }
             None => Ok(None),
         }
+    }
+
+    fn write(&mut self, content: &ClipContent) -> Result<(), ClipError> {
+        self.access.write(content)?;
+        self.last = Some(content.fingerprint());
+        Ok(())
+    }
+
+    fn note_written(&mut self, content: &ClipContent) {
+        self.last = Some(content.fingerprint());
+    }
+
+    fn is_concealed(&self) -> bool {
+        self.access.is_concealed()
     }
 }
 
@@ -221,8 +259,13 @@ mod engine_integration {
 
         // 워처가 변경 감지 → 엔진이 신호 발행.
         let change = watcher.poll().unwrap().expect("변경 감지");
-        let out = engine.on_local_clipboard(change.kind, &change.bytes, 1000).unwrap();
-        assert!(matches!(out, LocalOutcome::Emit(_)), "클립보드 변경이 신호 발행으로 이어짐");
+        let out = engine
+            .on_local_clipboard(change.kind, &change.bytes, 1000)
+            .unwrap();
+        assert!(
+            matches!(out, LocalOutcome::Emit(_)),
+            "클립보드 변경이 신호 발행으로 이어짐"
+        );
 
         // 같은 내용 재폴 → 변경 없음 → 발행 없음.
         assert_eq!(watcher.poll().unwrap(), None);

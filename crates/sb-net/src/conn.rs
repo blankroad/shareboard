@@ -31,7 +31,9 @@ pub struct Connection<S = TlsStream<TcpStream>> {
 
 impl<S: AsyncRead + AsyncWrite + Unpin> Connection<S> {
     pub fn from_stream(stream: S) -> Self {
-        Self { framed: Framed::new(stream, framed_codec()) }
+        Self {
+            framed: Framed::new(stream, framed_codec()),
+        }
     }
 
     /// C2s 메시지 전송.
@@ -119,7 +121,10 @@ where
         }
     });
 
-    ClientHandle { out: out_tx, inbox: in_rx }
+    ClientHandle {
+        out: out_tx,
+        inbox: in_rx,
+    }
 }
 
 #[cfg(test)]
@@ -132,6 +137,9 @@ mod tests {
         let id = Identity::generate();
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)), 45871);
         let res = connect(addr, [0u8; 32], &id).await;
-        assert!(matches!(res, Err(NetError::AddressNotAllowed(_))), "공인 IP 는 거부");
+        assert!(
+            matches!(res, Err(NetError::AddressNotAllowed(_))),
+            "공인 IP 는 거부"
+        );
     }
 }

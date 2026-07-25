@@ -9,7 +9,7 @@ use tokio::sync::{mpsc, Mutex, Notify};
 
 use sb_core::{Settings, SyncEngine};
 use sb_crypto::Identity;
-use sb_proto::{ContentId, C2s, DeviceId};
+use sb_proto::{C2s, ContentId, DeviceId};
 use sb_store::HistoryStore;
 
 pub type AppState = Arc<Mutex<Core>>;

@@ -4,7 +4,7 @@ use tauri::{AppHandle, Emitter, State};
 
 use sb_clipboard::{ClipContent, ClipboardAccess};
 use sb_core::history::Origin;
-use sb_proto::{ContentKind, C2s};
+use sb_proto::{C2s, ContentKind};
 
 use crate::core::*;
 
@@ -221,7 +221,10 @@ pub async fn create_workspace(
     core.workspace_id = Some(wid);
     core.settings.server.workspace_name = Some(name);
     core.log = vec![genesis_bytes.clone()];
-    core.pending = Some(PendingAction::Claim { genesis: genesis_bytes, token: setup_token });
+    core.pending = Some(PendingAction::Claim {
+        genesis: genesis_bytes,
+        token: setup_token,
+    });
     let _ = sb_store::files::save_json(&core.data_dir.join("settings.json"), &core.settings);
     emit_status(&app, &core);
     let rc = core.reconnect.clone();
@@ -232,10 +235,7 @@ pub async fn create_workspace(
 
 /// 조인(새 기기). 코드 저장 → 재연결 시 게스트 조인 플로우.
 #[tauri::command]
-pub async fn join_workspace(
-    state: State<'_, AppState>,
-    code: String,
-) -> Result<(), String> {
+pub async fn join_workspace(state: State<'_, AppState>, code: String) -> Result<(), String> {
     let mut core = state.lock().await;
     core.pending = Some(PendingAction::Join { code });
     let rc = core.reconnect.clone();
@@ -258,9 +258,13 @@ pub async fn generate_invite(state: State<'_, AppState>, expires_at: u64) -> Res
         sb_crypto::make_invite(&core.identity, wid, head, fp, expires_at).map_err(|e| e.to_string())?;
     let display = sb_crypto::invite::format_display(&code);
     if let Some(out) = &core.out {
-        out.send(C2s::PutInvite { locator, blob, ttl_s: sb_proto::params::INVITE_TTL_DEFAULT_S })
-            .await
-            .map_err(|_| "전송 실패")?;
+        out.send(C2s::PutInvite {
+            locator,
+            blob,
+            ttl_s: sb_proto::params::INVITE_TTL_DEFAULT_S,
+        })
+        .await
+        .map_err(|_| "전송 실패")?;
     } else {
         return Err("연결 없음".into());
     }

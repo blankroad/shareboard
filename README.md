@@ -65,11 +65,25 @@ setup_token_hash = "<sb-server --gen-token 으로 생성한 hex>"
 - 키는 OS keychain(폴백 사다리), 히스토리는 필드 암호화 + crypto-erase.
 - 퇴사자 제거 = epoch 키 회전 강제 → 제거된 기기는 이후 복호 불가.
 
+## CI / 공급망
+
+`.github/workflows/build.yml` — 3-OS 매트릭스(test/fmt/clippy) + 서버 빌드(ubuntu:22.04 컨테이너로
+glibc 하한 고정) + 프런트엔드 빌드 + 데스크톱 앱 컴파일 체크 + `cargo-deny`(라이선스·advisory).
+`deny.toml` 의 allow 목록에 GPL 계열이 없어 GPL 크레이트는 자동 거부된다(§D20).
+
 ## 현재 상태
 
-코어 6개 크레이트는 완성·테스트됨(95 tests). `sb-server` 통합 테스트가 **2대의 클라이언트가
+코어 6개 크레이트 완성·테스트됨(**99 tests**). `sb-server` 통합 테스트가 **2대의 클라이언트가
 릴레이를 거쳐 E2E 동기화**되는 전체 흐름을 검증한다. 데스크톱 앱은 코어를 결선해 컴파일되며,
 실제 GUI 실행은 `cargo tauri dev`(Tauri CLI)로 한다.
 
-미완/후속 과제: macOS `changeCount` 저비용 감지(현재 폴링), concealed 힌트 플랫폼별 감지,
-Wayland 직접 백엔드, GK wrap의 전체 7-필드 AAD·서명 검증(현재 앱은 단순화), 3플랫폼 패키징/서명.
+**완료된 후속 과제**
+- macOS `changeCount` 저비용 감지(D8) + concealed 힌트(`org.nspasteboard.ConcealedType`) 감지 — `sb-clipboard::macos`.
+- GK wrap **서명 + AAD 바인딩 + verify_rotation**(roster·서명·epoch·member_set_hash) — 앱이 검증된 경로 사용.
+- CI 워크플로우 + `cargo-deny` 공급망 게이트 + rustfmt.
+- Wayland data-control 백엔드 **스캐폴드**(`wayland-backend` feature, Linux 전용·기본 off).
+
+**남은 후속 과제**
+- Wayland 네이티브 **이벤트 감시**(data-control `selection` 구독) — 현재 폴링. Linux 실기기 검증 필요.
+- Linux/Windows concealed 힌트 감지(macOS만 구현됨).
+- 3플랫폼 실기기 패키징·코드사이닝(`cargo tauri build` + 각 OS 서명 인증서).

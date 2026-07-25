@@ -1,5 +1,8 @@
 // shareboard 데스크톱 앱 — 트레이 상주, 백그라운드 워커가 서버 연결 + 클립보드 동기화.
-#![cfg_attr(all(not(debug_assertions), target_os = "windows"), windows_subsystem = "windows")]
+#![cfg_attr(
+    all(not(debug_assertions), target_os = "windows"),
+    windows_subsystem = "windows"
+)]
 
 mod commands;
 mod core;
@@ -51,8 +54,8 @@ fn build_core() -> Core {
     };
 
     let engine = SyncEngine::new(identity.device_id(), gk.clone(), settings.engine_config());
-    let history = HistoryStore::open_path(&dd.join("history.db"), history_key, dedup_key)
-        .expect("history db");
+    let history =
+        HistoryStore::open_path(&dd.join("history.db"), history_key, dedup_key).expect("history db");
     let server_fp = settings
         .server
         .fingerprint_hex
@@ -110,10 +113,7 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
                     let v = !core.settings.sync.enabled;
                     core.settings.sync.enabled = v;
                     core.engine.set_enabled(v);
-                    let _ = sb_store::files::save_json(
-                        &core.data_dir.join("settings.json"),
-                        &core.settings,
-                    );
+                    let _ = sb_store::files::save_json(&core.data_dir.join("settings.json"), &core.settings);
                     crate::commands::emit_status(&app, &core);
                 });
             }

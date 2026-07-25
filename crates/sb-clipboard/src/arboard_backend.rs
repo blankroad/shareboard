@@ -46,7 +46,11 @@ fn png_to_rgba(png: &[u8]) -> Result<ImageData<'static>, ClipError> {
     let img = image::load_from_memory_with_format(png, ImageFormat::Png).map_err(err)?;
     let rgba = img.to_rgba8();
     let (w, h) = rgba.dimensions();
-    Ok(ImageData { width: w as usize, height: h as usize, bytes: rgba.into_raw().into() })
+    Ok(ImageData {
+        width: w as usize,
+        height: h as usize,
+        bytes: rgba.into_raw().into(),
+    })
 }
 
 impl ClipboardAccess for ArboardAccess {

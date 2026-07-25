@@ -28,7 +28,9 @@ pub fn save_json<T: Serialize>(path: &Path, value: &T) -> Result<(), StoreError>
 
 pub fn load_json<T: DeserializeOwned>(path: &Path) -> Result<Option<T>, StoreError> {
     match std::fs::read(path) {
-        Ok(b) => Ok(Some(serde_json::from_slice(&b).map_err(|e| StoreError::Serde(e.to_string()))?)),
+        Ok(b) => Ok(Some(
+            serde_json::from_slice(&b).map_err(|e| StoreError::Serde(e.to_string()))?,
+        )),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(StoreError::Io(e)),
     }
@@ -43,7 +45,10 @@ struct Maced {
 
 /// `data` 를 HMAC-SHA256(mac_key) 로 서명해 저장.
 pub fn save_maced(path: &Path, mac_key: &[u8; 32], data: &[u8]) -> Result<(), StoreError> {
-    let wrapper = Maced { data: data.to_vec(), mac: hmac_sha256(mac_key, data) };
+    let wrapper = Maced {
+        data: data.to_vec(),
+        mac: hmac_sha256(mac_key, data),
+    };
     save_json(path, &wrapper)
 }
 
@@ -104,7 +109,10 @@ mod tests {
         assert_eq!(load_maced(&path, &key).unwrap().unwrap(), b"trusted-roster-bytes");
 
         // 잘못된 키(=변조 또는 다른 장치) → MacMismatch.
-        assert!(matches!(load_maced(&path, &[9u8; 32]), Err(StoreError::MacMismatch)));
+        assert!(matches!(
+            load_maced(&path, &[9u8; 32]),
+            Err(StoreError::MacMismatch)
+        ));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

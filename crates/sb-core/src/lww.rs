@@ -12,7 +12,11 @@ pub struct LwwState {
 
 impl LwwState {
     pub fn new(me: DeviceId) -> Self {
-        Self { lamport: 0, current: None, me }
+        Self {
+            lamport: 0,
+            current: None,
+            me,
+        }
     }
 
     pub fn lamport(&self) -> Lamport {
@@ -81,6 +85,9 @@ mod tests {
         s.set_current(LwwKey::new(3, 100, [1u8; 32]));
         assert!(!s.would_apply(LwwKey::new(3, 100, [1u8; 32])), "동일 키는 미적용");
         assert!(s.would_apply(LwwKey::new(4, 0, [0u8; 32])), "더 큰 lamport 적용");
-        assert!(!s.would_apply(LwwKey::new(2, 999, [9u8; 32])), "낮은 lamport 미적용");
+        assert!(
+            !s.would_apply(LwwKey::new(2, 999, [9u8; 32])),
+            "낮은 lamport 미적용"
+        );
     }
 }

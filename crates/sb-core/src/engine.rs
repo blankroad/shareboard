@@ -8,9 +8,7 @@ use std::collections::VecDeque;
 
 use sb_crypto::GroupKey;
 use sb_proto::params::{INLINE_THRESHOLD, SEND_CACHE_ITEMS, SEND_CACHE_TTL_S};
-use sb_proto::{
-    ContentId, ContentKind, DeviceId, Epoch, LwwKey, SignalBody, SignalHdr,
-};
+use sb_proto::{ContentId, ContentKind, DeviceId, Epoch, LwwKey, SignalBody, SignalHdr};
 
 use crate::history::{HistoryBuffer, HistoryItem, Origin};
 use crate::settings::EngineConfig;
@@ -45,9 +43,17 @@ pub enum LocalOutcome {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RemoteDecision {
     /// inline 콘텐츠 즉시 적용(caller 가 OS 클립보드에 write).
-    ApplyInline { id: ContentId, kind: ContentKind, plaintext: Vec<u8> },
+    ApplyInline {
+        id: ContentId,
+        kind: ContentKind,
+        plaintext: Vec<u8>,
+    },
     /// 콘텐츠 fetch 필요.
-    NeedFetch { id: ContentId, kind: ContentKind, ct_size: u64 },
+    NeedFetch {
+        id: ContentId,
+        kind: ContentKind,
+        ct_size: u64,
+    },
     /// 무시(사유).
     Ignore(IgnoreReason),
 }
@@ -87,7 +93,11 @@ struct SendCache {
 
 impl SendCache {
     fn put(&mut self, id: ContentId, body_ct: Vec<u8>, now_ms: u64) {
-        if self.map.insert(id, (body_ct, now_ms + SEND_CACHE_TTL_S * 1000)).is_none() {
+        if self
+            .map
+            .insert(id, (body_ct, now_ms + SEND_CACHE_TTL_S * 1000))
+            .is_none()
+        {
             self.order.push_back(id);
         }
         while self.order.len() > SEND_CACHE_ITEMS {
@@ -97,7 +107,10 @@ impl SendCache {
         }
     }
     fn get(&self, id: &ContentId, now_ms: u64) -> Option<&[u8]> {
-        self.map.get(id).filter(|(_, exp)| *exp > now_ms).map(|(b, _)| b.as_slice())
+        self.map
+            .get(id)
+            .filter(|(_, exp)| *exp > now_ms)
+            .map(|(b, _)| b.as_slice())
     }
 }
 
@@ -292,7 +305,11 @@ impl SyncEngine {
                     return RemoteDecision::Ignore(IgnoreReason::Malformed);
                 }
                 self.apply_incoming(hdr.id, body.kind, &content, key, origin, now_ms);
-                RemoteDecision::ApplyInline { id: hdr.id, kind: body.kind, plaintext: content }
+                RemoteDecision::ApplyInline {
+                    id: hdr.id,
+                    kind: body.kind,
+                    plaintext: content,
+                }
             }
             None => {
                 self.pending.insert(
@@ -305,7 +322,11 @@ impl SyncEngine {
                         compressed: body.compressed,
                     },
                 );
-                RemoteDecision::NeedFetch { id: hdr.id, kind: body.kind, ct_size: hdr.ct_size }
+                RemoteDecision::NeedFetch {
+                    id: hdr.id,
+                    kind: body.kind,
+                    ct_size: hdr.ct_size,
+                }
             }
         }
     }
@@ -324,7 +345,11 @@ impl SyncEngine {
             return Err(CoreError::CidMismatch);
         }
         self.apply_incoming(id, p.kind, &content, p.key, p.origin, now_ms);
-        Ok(AppliedContent { id, kind: p.kind, plaintext: content })
+        Ok(AppliedContent {
+            id,
+            kind: p.kind,
+            plaintext: content,
+        })
     }
 
     fn apply_incoming(
@@ -407,7 +432,9 @@ mod tests {
         let mut a = engine(1, &gk);
         let mut b = engine(2, &gk);
         // 이미지는 inline 대상 아님(kind != Text) + 압축 안 함 → fetch 경로 강제.
-        let img: Vec<u8> = (0..40_000u32).map(|i| (i.wrapping_mul(2654435761) >> 24) as u8).collect();
+        let img: Vec<u8> = (0..40_000u32)
+            .map(|i| (i.wrapping_mul(2654435761) >> 24) as u8)
+            .collect();
         let sig = match a.on_local_clipboard(ContentKind::ImagePng, &img, 100).unwrap() {
             LocalOutcome::Emit(s) => *s,
             _ => unreachable!(),
@@ -480,6 +507,9 @@ mod tests {
         let gk = GroupKey::from_bytes(1, [5u8; 32]);
         let mut a = engine(1, &gk);
         a.set_enabled(false);
-        assert_eq!(a.on_local_clipboard(ContentKind::Text, b"x", 1).unwrap(), LocalOutcome::Disabled);
+        assert_eq!(
+            a.on_local_clipboard(ContentKind::Text, b"x", 1).unwrap(),
+            LocalOutcome::Disabled
+        );
     }
 }

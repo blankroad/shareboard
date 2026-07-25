@@ -23,14 +23,12 @@ pub mod wire;
 pub use e2e::{Profile, RotationBlob, SignalBody};
 pub use ids::{hex32, short_id, ContentId, DeviceId, Epoch, Lamport, Locator, LwwKey};
 pub use kinds::{
-    AbortReason, AppendRejectReason, ByeReason, ContentKind, EpochReason, ErrorCode, Platform,
-    RejectReason,
+    AbortReason, AppendRejectReason, ByeReason, ContentKind, EpochReason, ErrorCode, Platform, RejectReason,
 };
 pub use log::{GrantCert, LogEntry};
 pub use net::is_lan_allowed;
 pub use wire::{
-    decode, decode_env, encode, encode_env, Envelope, Hello, KeyUpdate, SignalHdr, Welcome, C2s,
-    S2c,
+    decode, decode_env, encode, encode_env, C2s, Envelope, Hello, KeyUpdate, S2c, SignalHdr, Welcome,
 };
 
 /// 프로토콜 인코딩/디코딩 오류.
@@ -40,7 +38,11 @@ pub enum ProtoError {
     Encode(String),
     #[error("CBOR 디코딩 실패: {0}")]
     Decode(String),
-    #[error("지원하지 않는 프로토콜 버전: {got} (지원: {}..={})", params::PROTO_MIN, params::PROTO_MAX)]
+    #[error(
+        "지원하지 않는 프로토콜 버전: {got} (지원: {}..={})",
+        params::PROTO_MIN,
+        params::PROTO_MAX
+    )]
     Version { got: u16 },
 }
 
@@ -52,7 +54,11 @@ mod tests {
     #[test]
     fn clipsignal_roundtrip() {
         let msg = C2s::ClipSignal {
-            hdr: SignalHdr { id: [7u8; 32], epoch: 3, ct_size: 1234 },
+            hdr: SignalHdr {
+                id: [7u8; 32],
+                epoch: 3,
+                ct_size: 1234,
+            },
             e2e: vec![1, 2, 3, 4, 5],
         };
         let bytes = encode_env(msg.clone()).unwrap();
@@ -68,7 +74,15 @@ mod tests {
             log_tail: vec![vec![9, 9], vec![8]],
             pending_key_update: Some(vec![1, 2]),
             presence: vec![([1u8; 32], true, None), ([2u8; 32], false, Some(vec![5, 6]))],
-            head: vec![([1u8; 32], SignalHdr { id: [0u8; 32], epoch: 1, ct_size: 10 }, vec![1])],
+            head: vec![(
+                [1u8; 32],
+                SignalHdr {
+                    id: [0u8; 32],
+                    epoch: 1,
+                    ct_size: 10,
+                },
+                vec![1],
+            )],
             server_time_ms: 42,
         };
         let bytes = encode_env(S2c::Welcome(w.clone())).unwrap();
@@ -117,7 +131,10 @@ mod tests {
     #[test]
     fn rejects_wrong_version() {
         // v=1 봉투를 강제로 만들어 디코딩 → Version 오류.
-        let env = Envelope { v: 1u16, msg: C2s::Ping { nonce: 5 } };
+        let env = Envelope {
+            v: 1u16,
+            msg: C2s::Ping { nonce: 5 },
+        };
         let bytes = encode(&env).unwrap();
         let err = decode_env::<C2s>(&bytes).unwrap_err();
         assert!(matches!(err, ProtoError::Version { got: 1 }));

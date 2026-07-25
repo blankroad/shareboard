@@ -41,7 +41,7 @@ mod integration {
     use tokio_util::codec::Framed;
 
     use sb_crypto::Identity;
-    use sb_proto::{decode_env, encode_env, SignalHdr, C2s, S2c, Welcome};
+    use sb_proto::{decode_env, encode_env, C2s, S2c, SignalHdr, Welcome};
 
     #[derive(Debug)]
     struct AcceptAnyClient;
@@ -129,10 +129,17 @@ mod integration {
                             server_time_ms: 0,
                         };
                         assert_eq!(h.proto_max, 2);
-                        framed.send(encode_env(S2c::Welcome(w)).unwrap().into()).await.unwrap();
+                        framed
+                            .send(encode_env(S2c::Welcome(w)).unwrap().into())
+                            .await
+                            .unwrap();
                     }
                     C2s::ClipSignal { hdr, e2e } => {
-                        let f = S2c::SignalFanout { origin: [1u8; 32], hdr, e2e };
+                        let f = S2c::SignalFanout {
+                            origin: [1u8; 32],
+                            hdr,
+                            e2e,
+                        };
                         framed.send(encode_env(f).unwrap().into()).await.unwrap();
                     }
                     C2s::Bye { .. } => break,
@@ -161,7 +168,11 @@ mod integration {
         }
 
         conn.send(C2s::ClipSignal {
-            hdr: SignalHdr { id: [9u8; 32], epoch: 0, ct_size: 5 },
+            hdr: SignalHdr {
+                id: [9u8; 32],
+                epoch: 0,
+                ct_size: 5,
+            },
             e2e: vec![1, 2, 3],
         })
         .await
@@ -174,7 +185,11 @@ mod integration {
             other => panic!("SignalFanout 기대: {other:?}"),
         }
 
-        conn.send(C2s::Bye { reason: sb_proto::ByeReason::Shutdown }).await.unwrap();
+        conn.send(C2s::Bye {
+            reason: sb_proto::ByeReason::Shutdown,
+        })
+        .await
+        .unwrap();
         srv.await.unwrap();
     }
 

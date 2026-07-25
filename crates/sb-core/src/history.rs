@@ -33,7 +33,10 @@ pub struct HistoryBuffer {
 
 impl HistoryBuffer {
     pub fn new(cap: usize) -> Self {
-        Self { items: VecDeque::new(), cap: cap.max(1) }
+        Self {
+            items: VecDeque::new(),
+            cap: cap.max(1),
+        }
     }
 
     /// 항목 추가(최신이 앞). 동일 id 존재 시 갱신·앞으로 이동(dedup).
@@ -97,7 +100,10 @@ impl HistoryBuffer {
 
 /// 텍스트 미리보기 생성 — 앞 256자(문자 경계 안전), 개행은 공백으로.
 pub fn text_preview(text: &str) -> String {
-    let flat: String = text.chars().map(|c| if c == '\n' || c == '\r' { ' ' } else { c }).collect();
+    let flat: String = text
+        .chars()
+        .map(|c| if c == '\n' || c == '\r' { ' ' } else { c })
+        .collect();
     flat.chars().take(256).collect()
 }
 

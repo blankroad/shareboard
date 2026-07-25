@@ -10,6 +10,8 @@ description = "shareboard 클립보드 접근 추상화 — ClipboardAccess 트�
 default = ["arboard-backend"]
 # 실제 OS 클립보드 백엔드. Linux 빌드는 libxcb/x11 개발 라이브러리 필요(§6).
 arboard-backend = ["dep:arboard", "dep:image"]
+# 실험적 Wayland data-control 네이티브 백엔드 (Linux 전용, 기본 off — §6, GNOME≤48 은 XWayland+arboard 폴백).
+wayland-backend = ["dep:wl-clipboard-rs"]
 
 [dependencies]
 sb-proto = { path = "../sb-proto" }
@@ -17,6 +19,16 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 arboard = { workspace = true, optional = true }
 image = { workspace = true, optional = true }
+
+# macOS 네이티브 changeCount / concealed 감지 (D8, §4.6). target-gated — macOS 에서만 컴파일.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", features = ["NSPasteboard"] }
+objc2-foundation = { version = "0.3", features = ["NSString", "NSArray"] }
+
+# Wayland 네이티브 백엔드 (Linux 전용·옵션). data-control 이벤트 감시는 후속(현재 폴링).
+[target.'cfg(target_os = "linux")'.dependencies]
+wl-clipboard-rs = { version = "0.9", optional = true }
 
 [dev-dependencies]
 sb-core = { path = "../sb-core" }

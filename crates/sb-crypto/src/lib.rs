@@ -22,10 +22,11 @@ pub mod wslog;
 
 pub use groupkey::GroupKey;
 pub use identity::{
-    device_id_from_spki, sign_with, verify_with_spki, Identity, IdentityPublic, DOMAIN_GRANT,
-    DOMAIN_LOG, DOMAIN_ROTWRAP,
+    device_id_from_spki, sign_with, verify_with_spki, Identity, IdentityPublic, DOMAIN_GRANT, DOMAIN_LOG,
+    DOMAIN_ROTWRAP,
 };
 pub use invite::{build_add_from_blob, generate_grant, make_invite, GrantKeypair, InviteSecret};
+pub use wrap::{build_signed_rotation, open_rotation, rotation_aad, seal_rotation, verify_rotation};
 pub use wslog::{verify_chain, MemberInfo, VerifiedLog};
 
 /// 암호 계층 오류. 세부 사유는 로그에만, 사용자 메시지는 뭉뚱그린다(타이밍/오라클 최소화).

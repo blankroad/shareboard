@@ -50,7 +50,8 @@ pub fn workspace_id(genesis_bytes: &[u8]) -> [u8; 32] {
 pub fn derive_subkey(gk: &[u8; 32], info: &[u8]) -> [u8; 32] {
     let hk = Hkdf::<Sha256>::new(None, gk);
     let mut out = [0u8; 32];
-    hk.expand(info, &mut out).expect("32 bytes is valid HKDF-SHA256 length");
+    hk.expand(info, &mut out)
+        .expect("32 bytes is valid HKDF-SHA256 length");
     out
 }
 
