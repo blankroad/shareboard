@@ -29,13 +29,17 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
+          sudo apt-get install -y libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libwayland-dev
       - name: fmt
         run: cargo fmt --all --check
       - name: clippy
         run: cargo clippy --workspace --all-targets
       - name: test
         run: cargo test --workspace
+      # Wayland 백엔드는 Linux 전용·기본 off — Docker(ubuntu:24.04, wl-clipboard-rs 0.9.3)로 검증됨.
+      - name: Wayland 백엔드 컴파일 (Linux)
+        if: runner.os == 'Linux'
+        run: cargo build -p sb-clipboard --features wayland-backend
 
   # 서버 바이너리 — glibc 하한을 러너 라벨과 분리(ubuntu:22.04 컨테이너, §13.4/R10).
   server-build:

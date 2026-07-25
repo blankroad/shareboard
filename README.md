@@ -82,6 +82,7 @@ glibc 하한 고정) + 프런트엔드 빌드 + 데스크톱 앱 컴파일 체�
 - GK wrap **서명 + AAD 바인딩 + verify_rotation**(roster·서명·epoch·member_set_hash) — 앱이 검증된 경로 사용.
 - CI 워크플로우 + `cargo-deny` 공급망 게이트 + rustfmt.
 - Wayland data-control 백엔드 **스캐폴드**(`wayland-backend` feature, Linux 전용·기본 off).
+  Docker(ubuntu:24.04, wl-clipboard-rs 0.9.3)로 **컴파일 검증 완료** + Linux 코어 99 tests 통과. CI에 Wayland 컴파일 잡 추가. `scripts/linux-verify.sh` 로 재현.
 
 **남은 후속 과제**
 - Wayland 네이티브 **이벤트 감시**(data-control `selection` 구독) — 현재 폴링. Linux 실기기 검증 필요.
