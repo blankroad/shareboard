@@ -22,6 +22,12 @@ use sb_store::{HistoryStore, KeyManager, KeyStore};
 use crate::core::{AppState, Core};
 
 fn data_dir() -> std::path::PathBuf {
+    // 여러 인스턴스 테스트: SHAREBOARD_DATA_DIR 로 데이터 디렉터리 분리 가능.
+    if let Ok(d) = std::env::var("SHAREBOARD_DATA_DIR") {
+        if !d.is_empty() {
+            return std::path::PathBuf::from(d);
+        }
+    }
     dirs::data_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("."))
         .join("shareboard")

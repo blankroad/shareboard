@@ -15,7 +15,7 @@ use sb_crypto::{
     verify_chain, verify_rotation, wslog, GroupKey, Identity,
 };
 use sb_net::init_crypto;
-use sb_proto::{C2s, ContentKind, EpochReason, KeyUpdate, LogEntry, S2c};
+use sb_proto::{C2s, ContentKind, EpochReason, KeyUpdate, LogEntry, Platform, Profile, S2c};
 use sb_server::{serve, tls, Shared};
 
 fn now_ms() -> u64 {
@@ -23,6 +23,14 @@ fn now_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
+}
+
+const PROFILE_AAD: &[u8] = b"sb/profile-v1";
+
+fn profile_name(gk: &GroupKey, enc: &[u8]) -> Option<String> {
+    let plain = gk.open_body(PROFILE_AAD, enc).ok()?;
+    let p: Profile = sb_proto::decode(&plain).ok()?;
+    Some(p.name)
 }
 
 fn cfg() -> EngineConfig {
@@ -204,8 +212,49 @@ async fn main() -> anyhow::Result<()> {
         "GK wrap 검증(서명·roster·epoch·member_set_hash)"
     );
     let gk_b = GroupKey::from_bytes(rblob.new_epoch, rblob.group_key);
-    let mut b_engine = SyncEngine::new(b.device_id(), gk_b, cfg());
+    let mut b_engine = SyncEngine::new(b.device_id(), gk_b.clone(), cfg());
     println!("[B] 그룹 키 수신·검증 완료 → 이제 동기화 준비됨\n");
+
+    // ── 기기 이름(프로필) E2E 교환 ──
+    let a_profile = Profile {
+        name: "엔지니어 A".into(),
+        platform: Platform::Macos,
+        log_head_hash: av.head_hash,
+        seq: now_ms(),
+        epoch: 0,
+        ts_ms: now_ms(),
+    };
+    let b_profile = Profile {
+        name: "디자이너 B".into(),
+        platform: Platform::Macos,
+        log_head_hash: bv.head_hash,
+        seq: now_ms(),
+        epoch: 0,
+        ts_ms: now_ms(),
+    };
+    let a_enc = gk.seal_body(PROFILE_AAD, &sb_proto::encode(&a_profile)?)?;
+    let b_enc = gk_b.seal_body(PROFILE_AAD, &sb_proto::encode(&b_profile)?)?;
+    ha.out.send(C2s::SetProfile { epoch: 0, e2e: a_enc }).await?;
+    hb.out.send(C2s::SetProfile { epoch: 0, e2e: b_enc }).await?;
+
+    // 서버가 상대 presence(enc_profile + IP)를 중계 → 복호해 이름 확인.
+    let (a_seen_addr, a_seen_prof) =
+        recv_until!(hb, S2c::Presence { addr, enc_profile: Some(p), .. } => (addr, p))
+            .expect("B sees A presence");
+    println!(
+        "[B] 멤버 목록: {} @ {}  (서버는 암호문만 중계, 이름 복호는 B가)",
+        profile_name(&gk_b, &a_seen_prof).unwrap_or("?".into()),
+        a_seen_addr.unwrap_or("?".into())
+    );
+    let (b_seen_addr, b_seen_prof) =
+        recv_until!(ha, S2c::Presence { addr, enc_profile: Some(p), .. } => (addr, p))
+            .expect("A sees B presence");
+    println!(
+        "[A] 멤버 목록: {} @ {}",
+        profile_name(&gk, &b_seen_prof).unwrap_or("?".into()),
+        b_seen_addr.unwrap_or("?".into())
+    );
+    println!();
 
     println!("─────────────  클립보드 동기화 시작  ─────────────\n");
 
