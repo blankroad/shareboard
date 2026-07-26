@@ -105,6 +105,10 @@
     await api.updateSettings(settings);
     settings = await api.getSettings();
   }
+  async function doReset() {
+    await api.resetOnboarding();
+    await refresh();
+  }
   async function copy(text: string, label: string) {
     try {
       await navigator.clipboard.writeText(text);
@@ -287,6 +291,21 @@
     {/if}
 
     {#if tab === "settings" && settings}
+      <div class="card">
+        <h3>연결 / 역할</h3>
+        {#if status?.hosting}
+          <div class="row"><div class="grow">역할</div><span class="pill" style="background:var(--primary-weak);color:var(--primary)">서버 호스트 (이 기기가 서버)</span></div>
+          <div class="row"><div class="grow">서버 주소</div><span class="mono">{status.host_addr}</span><button class="btn" onclick={() => copy(status?.host_addr ?? "", "주소")}>{copied === "주소" ? "복사됨" : "복사"}</button></div>
+          <div class="row"><div class="grow">서버 지문</div><span class="mono">{status.host_fingerprint?.slice(0, 20)}…</span><button class="btn" onclick={() => copy(status?.host_fingerprint ?? "", "지문")}>{copied === "지문" ? "복사됨" : "복사"}</button></div>
+        {:else}
+          <div class="row"><div class="grow">역할</div><span class="pill">클라이언트</span></div>
+          <div class="row"><div class="grow">접속 서버</div><span class="mono">{status?.server_addr ?? "-"}</span></div>
+        {/if}
+        <div class="row">
+          <span class="grow pill">역할을 바꾸려면(서버↔클라이언트) 재설정 후 처음 화면에서 다시 선택합니다.</span>
+          <button class="btn danger" onclick={doReset}>서버/역할 다시 설정</button>
+        </div>
+      </div>
       <div class="card">
         <h3>기기 이름</h3>
         <p class="pill">다른 멤버에게 IP 대신 이 이름으로 보입니다(집처럼 IP가 바뀌어도 유지). 비우면 OS 사용자 이름을 사용합니다.</p>
