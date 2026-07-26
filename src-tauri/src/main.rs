@@ -194,6 +194,7 @@ fn main() {
             commands::app_info,
             commands::get_status,
             commands::get_members,
+            commands::revoke_member,
             commands::get_settings,
             commands::update_settings,
             commands::set_sync_enabled,

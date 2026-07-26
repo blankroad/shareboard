@@ -16,6 +16,7 @@ export type Status = {
   sync_enabled: boolean;
   gk_present: boolean;
   device_id: string;
+  is_founder: boolean;
   hosting: boolean;
   host_addr: string | null;
   host_fingerprint: string | null;
@@ -50,6 +51,7 @@ export const api = {
   appInfo: () => invoke<AppInfo>("app_info"),
   getStatus: () => invoke<Status>("get_status"),
   getMembers: () => invoke<Member[]>("get_members"),
+  revokeMember: (device_id: string) => invoke("revoke_member", { device_id }),
   getSettings: () => invoke<any>("get_settings"),
   updateSettings: (settings: any) => invoke("update_settings", { settings }),
   setSyncEnabled: (enabled: boolean) => invoke("set_sync_enabled", { enabled }),

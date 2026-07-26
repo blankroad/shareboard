@@ -20,6 +20,9 @@ pub fn status_of(core: &Core) -> StatusView {
         sync_enabled: core.settings.sync.enabled,
         gk_present: core.gk_present,
         device_id: hex(&core.device_id()),
+        is_founder: sb_crypto::wslog::verify_chain(&core.log, 0)
+            .map(|v| v.creator == core.device_id())
+            .unwrap_or(false),
         hosting: core.hosting,
         host_addr: core.host_addr.clone(),
         host_fingerprint: core.host_fp.map(|f| hex(&f)),
@@ -442,6 +445,151 @@ pub async fn apply_join_link(app: &AppHandle, state: &AppState, link: &str) -> R
 #[tauri::command]
 pub async fn join_by_link(app: AppHandle, state: State<'_, AppState>, link: String) -> Result<(), String> {
     apply_join_link(&app, state.inner(), &link).await
+}
+
+/// 강퇴 재료(락을 잡은 채 await 하지 않도록 소유값만 추출 — Core 는 !Sync).
+struct RevokeCtx {
+    identity: std::sync::Arc<sb_crypto::Identity>,
+    wid: [u8; 32],
+    out: tokio::sync::mpsc::Sender<C2s>,
+    log: Vec<Vec<u8>>,
+}
+
+/// 멤버 강퇴(§4.4) — Remove + Epoch 회전 + 남은 멤버에게 새 GK 재-wrap 배달.
+///
+/// 강퇴 대상은 제거 후 roster 에서 빠져 GK_{e+1} 을 받지 못하므로 접근만 상실한다.
+/// (로컬 키 자동 파기는 없음 — §5.4 는 검증된 Remove(self)+명시 확인 이중 게이트에서만.)
+/// 서버는 blind relay 라 변경 불필요: 기존 AppendEntry + PutKeyUpdate 중계로 충분하며,
+/// LogAppended 는 송신자를 제외한 현재 roster 로만 팬아웃되어 강퇴 대상은 통지받지 않는다.
+#[tauri::command]
+pub async fn revoke_member(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    device_id: String,
+) -> Result<(), String> {
+    let target = hex32(&device_id).ok_or("잘못된 device_id")?;
+
+    // ── 락 구간: 검증 + 소유값 추출 ──
+    let ctx = {
+        let core = state.lock().await;
+        if !core.connected {
+            return Err("서버에 연결되어야 합니다".into());
+        }
+        if core.current_gk.is_none() {
+            return Err("그룹 키 없음".into());
+        }
+        if target == core.device_id() {
+            return Err("자기 자신은 강퇴할 수 없습니다".into());
+        }
+        RevokeCtx {
+            identity: core.identity.clone(),
+            wid: core.workspace_id.ok_or("워크스페이스 없음")?,
+            out: core.out.clone().ok_or("연결 없음")?,
+            log: core.log.clone(),
+        }
+    };
+
+    // ── 락 밖: crypto 시퀀스(remove → epoch → rotation, 정본 = wslog::remove_then_epoch_rotates) ──
+    use sb_crypto::wslog;
+    let me = &ctx.identity;
+    let v = wslog::verify_chain(&ctx.log, 0).map_err(|e| e.to_string())?;
+    if !v.is_member(&target) {
+        return Err("대상이 현재 멤버가 아닙니다".into());
+    }
+
+    // 1) Remove(잔존 멤버 서명).
+    let remove = wslog::build_remove(me, v.head_hash, v.head_seq + 1, target, now_ms());
+    let remove_bytes = wslog::entry_bytes(&remove);
+
+    // 2) 제거 후 roster → member_set_hash.
+    let mut log2 = ctx.log.clone();
+    log2.push(remove_bytes.clone());
+    let v2 = wslog::verify_chain(&log2, 0).map_err(|e| e.to_string())?;
+    let msh = v2.member_set_hash();
+    let new_epoch = v.epoch + 1;
+
+    // 3) 새 GK(PCS: 파생 아님, 무작위 신규).
+    let new_gk = sb_crypto::GroupKey::generate(new_epoch);
+
+    // 4) Epoch(회전자 서명, reason=Revoke → grace 0).
+    let epoch_e = wslog::build_epoch(
+        me,
+        v2.head_hash,
+        v2.head_seq + 1,
+        new_epoch,
+        sb_proto::EpochReason::Revoke(target),
+        msh,
+        [0u8; 32],
+        now_ms(),
+    );
+    let epoch_bytes = wslog::entry_bytes(&epoch_e);
+    let epoch_hash = wslog::entry_hash(&epoch_bytes);
+
+    // 5) 서명된 RotationBlob(수신자 무관) — 채택될 Epoch 엔트리 해시에 바인딩(§4.4).
+    let blob = sb_crypto::build_signed_rotation(
+        me,
+        new_epoch,
+        *new_gk.expose(),
+        sb_proto::EpochReason::Revoke(target),
+        epoch_hash,
+        msh,
+    );
+
+    // 6) 남은 멤버별 봉인(자기 자신 제외 — 대상은 이미 v2.roster 밖이라 구조적으로 제외됨).
+    let me_id = me.device_id();
+    let mut updates = Vec::new();
+    for (did, mi) in &v2.members {
+        if *did == me_id {
+            continue;
+        }
+        let wrap =
+            sb_crypto::seal_rotation(&mi.kem_pk, &ctx.wid, did, &blob).map_err(|e| e.to_string())?;
+        updates.push(sb_proto::KeyUpdate {
+            to: *did,
+            epoch: new_epoch,
+            wrap,
+        });
+    }
+
+    // ── 송신(순서 중요: Remove → Epoch → KeyUpdate. Epoch 를 KeyUpdate 보다 먼저 보내야
+    //    수신자의 verify_rotation(new_epoch==log.epoch) 이 통과한다). ──
+    ctx.out
+        .send(C2s::AppendEntry {
+            entry: remove_bytes.clone(),
+        })
+        .await
+        .map_err(|_| "전송 실패".to_string())?;
+    ctx.out
+        .send(C2s::AppendEntry {
+            entry: epoch_bytes.clone(),
+        })
+        .await
+        .map_err(|_| "전송 실패".to_string())?;
+    if !updates.is_empty() {
+        ctx.out
+            .send(C2s::PutKeyUpdate { updates })
+            .await
+            .map_err(|_| "전송 실패".to_string())?;
+    }
+
+    // ── 락: 로컬 채택. 서버는 송신자에게 LogAppended echo 를 안 하므로 직접 반영한다.
+    //    스냅샷 이후 로그가 변하지 않았을 때만 반영(그 사이 다른 엔트리가 붙었다면 서버가
+    //    prev_hash 불일치로 우리 append 를 거부했을 것이므로 어디에서도 회전이 없다). ──
+    let mut core = state.lock().await;
+    if core.log.len() == ctx.log.len() {
+        core.log.push(remove_bytes);
+        core.log.push(epoch_bytes);
+        let _ = persist_group_key(&core, &new_gk);
+        core.engine.set_group_key(new_gk.clone());
+        core.current_gk = Some(new_gk);
+        let target_hex = hex(&target);
+        core.members.retain(|m| m.device_id != target_hex);
+    } else {
+        tracing::warn!("강퇴 중 로그 변경 감지 — 로컬 반영 생략(재연결 시 서버에서 재수신)");
+    }
+    emit_status(&app, &core);
+    let _ = app.emit("members-changed", ());
+    Ok(())
 }
 
 /// keystore 에 현재 GK 저장(에폭 + 32B).

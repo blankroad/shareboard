@@ -109,6 +109,20 @@
     await api.resetOnboarding();
     await refresh();
   }
+  // 창립자만, 연결·GK 있을 때, 자기 자신 제외.
+  const canRevoke = (m: Member) =>
+    !!status?.is_founder && !!status?.connected && !!status?.gk_present && m.device_id !== status?.device_id;
+  async function onRevoke(m: Member) {
+    const label = m.name ?? m.addr ?? m.device_id.slice(0, 8);
+    if (!confirm(`${label} 님을 내보낼까요?\n그룹 키가 회전되어 이 기기는 더 이상 복호할 수 없게 됩니다. 재참여하려면 새 초대가 필요합니다.`)) return;
+    err = null;
+    try {
+      await api.revokeMember(m.device_id);
+      await refresh();
+    } catch (e: any) {
+      err = String(e);
+    }
+  }
   async function copy(text: string, label: string) {
     try {
       await navigator.clipboard.writeText(text);
@@ -240,6 +254,9 @@
                 <span class="mono" style="margin-left:6px;font-size:11px;color:var(--muted)">{m.device_id.slice(0, 8)}</span>
               </div>
               <span class="pill">{m.online ? "온라인" : "오프라인"}</span>
+              {#if canRevoke(m)}
+                <button class="btn danger" onclick={() => onRevoke(m)} title="이 멤버를 내보내고 그룹 키를 회전합니다">내보내기</button>
+              {/if}
             </div>
           {/each}
         {/if}

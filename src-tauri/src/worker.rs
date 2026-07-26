@@ -390,13 +390,18 @@ async fn handle_msg(
     match msg {
         S2c::Welcome(w) => {
             let mut core = state.lock().await;
-            // 밀린 wrap 먼저(presence 프로필 복호에 GK 필요).
+            // 1) 로그 먼저 반영 — 회전 wrap 검증(verify_rotation)은 최신 로그(epoch·roster)
+            //    기준이어야 한다. 오프라인 중 강퇴 회전을 받은 남은 멤버가 밀린 wrap 을
+            //    stale 로그로 검증하면 epoch/member_set_hash 불일치로 영영 채택 못 함.
+            if !w.log_tail.is_empty() {
+                core.log = w.log_tail.clone();
+            }
+            // 2) 밀린 wrap 적용(이제 최신 로그에 대해 검증 통과 — presence 프로필 복호에도 필요).
             if let Some(wrapped) = w.pending_key_update.clone() {
                 try_set_gk_from_wrap(&mut core, &wrapped);
             }
-            // 로그 반영(있으면).
+            // 3) 로그 기반 상태/멤버 갱신(GK 확보 후 프로필 복호).
             if !w.log_tail.is_empty() {
-                core.log = w.log_tail.clone();
                 if let Ok(v) = verify_chain(&core.log, 0) {
                     core.workspace_id = Some(v.workspace_id);
                     core.settings.server.workspace_name = Some(v.workspace_name.clone());

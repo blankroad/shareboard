@@ -484,6 +484,96 @@ mod tests {
         assert_eq!(v3.members.len(), 1);
     }
 
+    /// 창립자 A 가 C 를 강퇴 → GK 회전 → 남은 멤버 B 는 새 GK 채택, C 는 배제.
+    /// commands::revoke_member 의 crypto 시퀀스 정본 검증(3인 라운드트립).
+    #[test]
+    fn revoke_rotates_and_reseals_for_remaining() {
+        use crate::wrap::{build_signed_rotation, open_rotation, seal_rotation, verify_rotation};
+
+        fn add_member(
+            sponsor: &Identity,
+            subject: &Identity,
+            wid: [u8; 32],
+            seq: u64,
+            ts: u64,
+            chain: &mut Vec<Vec<u8>>,
+        ) {
+            let grant_sk = SigningKey::random(&mut OsRng);
+            let grant_pk_der = p256::ecdsa::VerifyingKey::from(&grant_sk)
+                .to_public_key_der()
+                .unwrap()
+                .as_bytes()
+                .to_vec();
+            let gc = build_grant_cert(sponsor, grant_pk_der, 10_000, wid);
+            let head = entry_hash(chain.last().unwrap());
+            let add = build_add(&grant_sk, gc, &subject.public(), head, seq, ts);
+            chain.push(entry_bytes(&add));
+        }
+
+        // 3인 로스터: 창립자 A + B + C (모두 A 가 grant).
+        let a = Identity::generate();
+        let (genesis, wid) = build_genesis(&a, "eng-team", 1000);
+        let mut chain = vec![entry_bytes(&genesis)];
+        let b = Identity::generate();
+        let c = Identity::generate();
+        add_member(&a, &b, wid, 1, 1100, &mut chain);
+        add_member(&a, &c, wid, 2, 1200, &mut chain);
+
+        let v = verify_chain(&chain, 0).unwrap();
+        assert_eq!(v.members.len(), 3);
+        assert_eq!(v.epoch, 0);
+
+        // ── A 가 C 를 강퇴: Remove → 제거 후 roster → Epoch 회전 ──
+        let remove = build_remove(&a, v.head_hash, v.head_seq + 1, c.device_id(), 1300);
+        chain.push(entry_bytes(&remove));
+        let v2 = verify_chain(&chain, 0).unwrap();
+        assert!(!v2.is_member(&c.device_id()), "강퇴 후 C 는 roster 밖");
+        assert_eq!(v2.members.len(), 2);
+
+        let msh = v2.member_set_hash();
+        let new_epoch = v.epoch + 1;
+        let new_gk = crate::GroupKey::generate(new_epoch);
+
+        let epoch_e = build_epoch(
+            &a,
+            v2.head_hash,
+            v2.head_seq + 1,
+            new_epoch,
+            EpochReason::Revoke(c.device_id()),
+            msh,
+            [0u8; 32],
+            1400,
+        );
+        let epoch_bytes = entry_bytes(&epoch_e);
+        let epoch_hash = entry_hash(&epoch_bytes);
+        chain.push(epoch_bytes);
+        let v3 = verify_chain(&chain, 0).unwrap();
+        assert_eq!(v3.epoch, new_epoch);
+        assert_eq!(v3.members.len(), 2);
+        // 커맨드는 msh 를 v2(제거 후)에서 계산 — 수신자의 v3 해시와 같아야 verify_rotation 통과.
+        assert_eq!(msh, v3.member_set_hash(), "epoch 엔트리는 roster 를 바꾸지 않음");
+
+        // ── 회전 blob 생성 + 남은 멤버 B 앞 봉인 → B 가 열고 검증·채택 ──
+        let blob = build_signed_rotation(
+            &a,
+            new_epoch,
+            *new_gk.expose(),
+            EpochReason::Revoke(c.device_id()),
+            epoch_hash,
+            msh,
+        );
+        let b_kem = v2.members.get(&b.device_id()).unwrap().kem_pk;
+        let wrapped = seal_rotation(&b_kem, &wid, &b.device_id(), &blob).unwrap();
+
+        let opened = open_rotation(&b, &wid, &wrapped).unwrap();
+        assert!(verify_rotation(&opened, &v3), "남은 멤버 B 는 회전을 검증·채택");
+        assert_eq!(opened.new_epoch, new_epoch);
+        assert_eq!(&opened.group_key, new_gk.expose(), "B 가 얻은 GK == 새 GK");
+
+        // ── C 는 roster 밖이라 어떤 wrap 도 봉인되지 않음(접근 상실) ──
+        assert!(!v3.members.contains_key(&c.device_id()));
+    }
+
     #[test]
     fn forged_add_signature_truncates_prefix() {
         let (_f, _j, mut chain) = build_two_member_chain();

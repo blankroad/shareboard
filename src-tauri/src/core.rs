@@ -105,6 +105,8 @@ pub struct StatusView {
     pub sync_enabled: bool,
     pub gk_present: bool,
     pub device_id: String,
+    /// 이 기기가 워크스페이스 창립자인지(강퇴 등 관리 액션 노출용).
+    pub is_founder: bool,
     pub hosting: bool,
     pub host_addr: Option<String>,
     pub host_fingerprint: Option<String>,
