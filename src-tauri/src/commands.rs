@@ -141,6 +141,8 @@ pub async fn update_settings(
     if need_reconnect {
         rc.notify_one();
     }
+    // 기기 이름이 바뀌었을 수 있으니 프로필 재발행.
+    crate::worker::send_profile(state.inner()).await;
     Ok(())
 }
 

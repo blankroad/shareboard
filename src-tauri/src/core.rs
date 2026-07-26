@@ -86,7 +86,8 @@ impl Core {
 #[derive(Clone, Serialize)]
 pub struct MemberView {
     pub device_id: String,
-    pub name: String,
+    /// E2E 프로필에서 복호한 기기 이름(있으면).
+    pub name: Option<String>,
     pub online: bool,
     pub platform: String,
     /// 서버가 스탬프한 접속 주소(사람 식별용).

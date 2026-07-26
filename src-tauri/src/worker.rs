@@ -17,11 +17,92 @@ use sb_crypto::wslog;
 use sb_crypto::{verify_chain, GroupKey};
 use sb_net::ClientHandle;
 use sb_proto::params::{CHUNK_SIZE, READ_HARD_LIMIT};
-use sb_proto::{C2s, ContentId, DeviceId, LogEntry, S2c};
+use sb_proto::{C2s, ContentId, DeviceId, LogEntry, Platform, Profile, S2c};
 use sb_store::FileKeyStore;
 
 use crate::commands::emit_status;
 use crate::core::{hex, AppState, Core, MemberView, PendingAction};
+
+/// 프로필 봉인 AAD(도메인 분리, k_body 재사용).
+const PROFILE_AAD: &[u8] = b"sb/profile-v1";
+
+/// OS 로그인 사용자 이름.
+fn os_username() -> Option<String> {
+    std::env::var("USER")
+        .ok()
+        .or_else(|| std::env::var("LOGNAME").ok())
+        .or_else(|| std::env::var("USERNAME").ok())
+        .filter(|s| !s.trim().is_empty())
+}
+
+/// 이 기기의 표시 이름 — 설정 override > OS 사용자 이름 > 비식별 기본값.
+fn device_name(core: &Core) -> String {
+    if let Some(n) = &core.settings.app.device_name_override {
+        if !n.trim().is_empty() {
+            return n.trim().to_string();
+        }
+    }
+    os_username().unwrap_or_else(|| {
+        let plat = match std::env::consts::OS {
+            "macos" => "mac",
+            "windows" => "win",
+            "linux" => "linux",
+            o => o,
+        };
+        format!("{plat}-{}", &hex(&core.device_id())[..4])
+    })
+}
+
+fn this_platform() -> Platform {
+    match std::env::consts::OS {
+        "windows" => Platform::Windows,
+        "linux" => Platform::Linux,
+        _ => Platform::Macos,
+    }
+}
+
+/// GK 로 봉인한 enc_profile 에서 이름을 복호(실패 시 None).
+fn decode_profile_name(gk: Option<&GroupKey>, enc: &Option<Vec<u8>>) -> Option<String> {
+    let gk = gk?;
+    let enc = enc.as_ref()?;
+    let plain = gk.open_body(PROFILE_AAD, enc).ok()?;
+    let p: Profile = sb_proto::decode(&plain).ok()?;
+    if p.name.is_empty() {
+        None
+    } else {
+        Some(p.name)
+    }
+}
+
+/// 내 프로필(이름)을 GK 로 봉인해 SetProfile 로 발행. GK 없으면 no-op.
+pub async fn send_profile(state: &AppState) {
+    let (out, gk, name, head) = {
+        let c = state.lock().await;
+        let (Some(out), Some(gk)) = (c.out.clone(), c.current_gk.clone()) else {
+            return;
+        };
+        (out, gk, device_name(&c), c.log_head().1)
+    };
+    let profile = Profile {
+        name,
+        platform: this_platform(),
+        log_head_hash: head,
+        seq: now_ms(),
+        epoch: gk.epoch(),
+        ts_ms: now_ms(),
+    };
+    let Ok(bytes) = sb_proto::encode(&profile) else {
+        return;
+    };
+    if let Ok(enc) = gk.seal_body(PROFILE_AAD, &bytes) {
+        let _ = out
+            .send(C2s::SetProfile {
+                epoch: gk.epoch(),
+                e2e: enc,
+            })
+            .await;
+    }
+}
 
 pub fn keystore_for(data_dir: &Path) -> FileKeyStore {
     FileKeyStore::new(data_dir.join("keys")).expect("keystore dir")
@@ -234,6 +315,8 @@ async fn session(app: &AppHandle, state: &AppState, mut handle: ClientHandle) {
         core.join_error = None;
         emit_status(app, &core);
     }
+    // 내 기기 이름을 다른 멤버에게 알림(GK 있으면).
+    send_profile(state).await;
 
     // 동기화 루프. macOS 는 changeCount 기반, 그 외는 폴링 (sb-clipboard::system_watcher).
     let mut watcher = sb_clipboard::system_watcher();
@@ -307,18 +390,19 @@ async fn handle_msg(
     match msg {
         S2c::Welcome(w) => {
             let mut core = state.lock().await;
+            // 밀린 wrap 먼저(presence 프로필 복호에 GK 필요).
+            if let Some(wrapped) = w.pending_key_update.clone() {
+                try_set_gk_from_wrap(&mut core, &wrapped);
+            }
             // 로그 반영(있으면).
             if !w.log_tail.is_empty() {
                 core.log = w.log_tail.clone();
                 if let Ok(v) = verify_chain(&core.log, 0) {
                     core.workspace_id = Some(v.workspace_id);
                     core.settings.server.workspace_name = Some(v.workspace_name.clone());
-                    core.members = members_from(&v, &w.presence);
+                    let gk = core.current_gk.clone();
+                    core.members = members_from(&v, &w.presence, gk.as_ref());
                 }
-            }
-            // 밀린 wrap.
-            if let Some(wrapped) = w.pending_key_update.clone() {
-                try_set_gk_from_wrap(&mut core, &wrapped);
             }
             core.connected = true;
             emit_status(app, &core);
@@ -329,6 +413,8 @@ async fn handle_msg(
                 apply_signal(app, state, watcher, handle, origin, hdr, e2e).await;
             }
             let _ = app.emit("members-changed", ());
+            // 내 프로필 발행(Welcome 으로 GK 확보했을 수 있음).
+            send_profile(state).await;
         }
         S2c::SignalFanout { origin, hdr, e2e } => {
             apply_signal(app, state, watcher, handle, origin, hdr, e2e).await;
@@ -385,13 +471,17 @@ async fn handle_msg(
             device_id,
             online,
             addr,
-            ..
+            enc_profile,
         } => {
             let mut core = state.lock().await;
+            let name = decode_profile_name(core.current_gk.as_ref(), &enc_profile);
             if let Some(m) = core.members.iter_mut().find(|m| m.device_id == hex(&device_id)) {
                 m.online = online;
                 if addr.is_some() {
                     m.addr = addr;
+                }
+                if name.is_some() {
+                    m.name = name;
                 }
             }
             let _ = app.emit("members-changed", ());
@@ -401,9 +491,13 @@ async fn handle_msg(
             on_log_appended(app, state, handle, entry).await;
         }
         S2c::KeyUpdatePush { wrap } => {
-            let mut core = state.lock().await;
-            try_set_gk_from_wrap(&mut core, &wrap);
-            emit_status(app, &core);
+            {
+                let mut core = state.lock().await;
+                try_set_gk_from_wrap(&mut core, &wrap);
+                emit_status(app, &core);
+            }
+            // GK 확보 후 내 프로필 발행.
+            send_profile(state).await;
         }
         S2c::Bye { .. } => return false,
         _ => {}
@@ -471,7 +565,26 @@ async fn on_log_appended(app: &AppHandle, state: &AppState, handle: &ClientHandl
     let mut core = state.lock().await;
     core.log.push(entry.clone());
     let Ok(v) = verify_chain(&core.log, 0) else { return };
-    core.members = members_from(&v, &[]);
+    // 기존 멤버의 presence(online/addr/name)를 보존하고 새 멤버만 추가.
+    let prev: std::collections::HashMap<String, MemberView> = core
+        .members
+        .iter()
+        .map(|m| (m.device_id.clone(), m.clone()))
+        .collect();
+    core.members = v
+        .members
+        .keys()
+        .map(|d| {
+            let id = hex(d);
+            prev.get(&id).cloned().unwrap_or(MemberView {
+                device_id: id,
+                name: None,
+                online: false,
+                platform: String::new(),
+                addr: None,
+            })
+        })
+        .collect();
     let _ = app.emit("members-changed", ());
 
     if let Ok(LogEntry::Add {
@@ -612,15 +725,19 @@ async fn recv_ack(handle: &mut ClientHandle) -> Option<u64> {
     None
 }
 
-/// VerifiedLog + presence → MemberView 목록.
-fn members_from(v: &sb_crypto::VerifiedLog, presence: &[sb_proto::PresenceEntry]) -> Vec<MemberView> {
+/// VerifiedLog + presence → MemberView 목록. `gk` 로 enc_profile 의 이름을 복호.
+fn members_from(
+    v: &sb_crypto::VerifiedLog,
+    presence: &[sb_proto::PresenceEntry],
+    gk: Option<&GroupKey>,
+) -> Vec<MemberView> {
     v.members
         .keys()
         .map(|d| {
             let p = presence.iter().find(|e| &e.device_id == d);
             MemberView {
                 device_id: hex(d),
-                name: crate::core::hex(d)[..8].to_string(),
+                name: p.and_then(|e| decode_profile_name(gk, &e.enc_profile)),
                 online: p.map(|e| e.online).unwrap_or(false),
                 platform: String::new(),
                 addr: p.and_then(|e| e.addr.clone()),

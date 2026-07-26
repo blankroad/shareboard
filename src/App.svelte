@@ -230,9 +230,10 @@
               <span class="dot {m.online ? 'on' : 'off'}"></span>
               <div class="grow">
                 <span style="font-weight:600">
-                  {m.device_id === status?.device_id ? "이 기기" : (m.addr ?? "주소 미상")}
+                  {m.name ?? (m.device_id === status?.device_id ? "이 기기" : (m.addr ?? "주소 미상"))}
                 </span>
-                <span class="mono" style="margin-left:8px;font-size:11px;color:var(--muted)">{m.device_id.slice(0, 8)}</span>
+                {#if m.addr && m.name}<span class="pill" style="margin-left:6px">{m.addr}</span>{/if}
+                <span class="mono" style="margin-left:6px;font-size:11px;color:var(--muted)">{m.device_id.slice(0, 8)}</span>
               </div>
               <span class="pill">{m.online ? "온라인" : "오프라인"}</span>
             </div>
@@ -286,6 +287,11 @@
     {/if}
 
     {#if tab === "settings" && settings}
+      <div class="card">
+        <h3>기기 이름</h3>
+        <p class="pill">다른 멤버에게 IP 대신 이 이름으로 보입니다(집처럼 IP가 바뀌어도 유지). 비우면 OS 사용자 이름을 사용합니다.</p>
+        <input bind:value={settings.app.device_name_override} placeholder="비우면 OS 사용자 이름 (예: chulsoo)" />
+      </div>
       <div class="card">
         <h3>동기화</h3>
         <label class="toggle"><input type="checkbox" bind:checked={settings.sync.sync_text} style="width:auto" /> 텍스트 동기화</label>
