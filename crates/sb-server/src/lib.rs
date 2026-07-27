@@ -118,6 +118,11 @@ impl Shared {
         Self::build(setup_token_hash, log, claimed, epoch, Some(data_dir))
     }
 
+    /// 워크스페이스가 이미 생성(클레임)되었는가 — 기동 로그/진단용.
+    pub async fn is_claimed(&self) -> bool {
+        self.inner.lock().await.claimed
+    }
+
     fn build(
         setup_token_hash: Option<[u8; 32]>,
         log: Vec<Vec<u8>>,
@@ -508,7 +513,7 @@ async fn handle_conn(
 
     shared.on_connect(dev, tx, peer).await;
 
-    let writer = tokio::spawn(async move {
+    let mut writer = tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
             if let Ok(bytes) = encode_env(msg) {
                 let frame: bytes::Bytes = bytes.into();
@@ -534,8 +539,16 @@ async fn handle_conn(
         }
     }
 
+    // on_disconnect 가 세션 맵에서 tx 를 지우면 writer 의 rx 가 닫혀 루프가 자연 종료된다.
     shared.on_disconnect(dev).await;
-    writer.abort();
+    // 곧바로 abort 하면 큐에 남은 프레임이 버려진다 — 거부 사유(Error: 토큰 불일치 등)를
+    // 보내고 세션을 끊는 경로에서 클라가 사유 대신 EOF 만 보게 되므로, flush 를 기다린다.
+    if tokio::time::timeout(std::time::Duration::from_secs(2), &mut writer)
+        .await
+        .is_err()
+    {
+        writer.abort();
+    }
     let _ = ByeReason::Shutdown; // 사용 표식
     Ok(())
 }

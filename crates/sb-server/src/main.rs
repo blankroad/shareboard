@@ -149,7 +149,18 @@ async fn main() -> Result<()> {
     println!("  → 초대 URI/설정에 이 지문을 넣어 클라이언트가 pinning 합니다.");
 
     let acceptor = TlsAcceptor::from(tls::server_config(&id).map_err(|e| anyhow::anyhow!("{e}"))?);
-    let shared = Shared::new(cfg.setup_token_hash_bytes());
+    // 워크스페이스 로그를 data_dir 에 영속화 — 재시작해도 멤버십이 유지된다(§7.4).
+    // 영속을 끄면(Shared::new) 재기동 시 로그가 사라져 서버가 unclaimed 로 되돌아간다.
+    let shared = Shared::with_persistence(
+        cfg.setup_token_hash_bytes(),
+        std::path::PathBuf::from(&cfg.data_dir),
+    );
+    if shared.is_claimed().await {
+        println!(
+            "  → 기존 워크스페이스 로그를 {}/wslog.cbor 에서 복원했습니다.",
+            cfg.data_dir
+        );
+    }
     let listener = TcpListener::bind(addr).await.context("bind 실패")?;
     serve(listener, acceptor, shared).await;
     Ok(())

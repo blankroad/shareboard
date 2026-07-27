@@ -8,13 +8,14 @@
   let history = $state<HistoryItem[]>([]);
   let tab = $state<"overview" | "members" | "history" | "settings">("overview");
 
-  // 온보딩
-  let onbMode = $state<"host" | "join">("host");
+  // 온보딩 — host: 이 기기가 서버 / join: 초대로 참여 / found: 기존 sb-server 에 새로 만들기
+  let onbMode = $state<"host" | "join" | "found">("host");
   let fName = $state("");
   let fServer = $state("");
   let fFp = $state("");
   let fCode = $state("");
   let fLink = $state("");
+  let fToken = $state("");
   let manualJoin = $state(false);
   let inviteCode = $state<string | null>(null);
   let inviteLink = $state<string | null>(null);
@@ -48,6 +49,19 @@
     busy = true;
     try {
       await api.hostWorkspace(fName || "워크스페이스");
+      await refresh();
+    } catch (e: any) {
+      err = String(e);
+    } finally {
+      busy = false;
+    }
+  }
+  // 기존 sb-server 에 워크스페이스 생성(창립자). 성공/실패는 워커가 status 로 알린다.
+  async function doFound() {
+    err = null;
+    busy = true;
+    try {
+      await api.createWorkspace(fServer.trim(), fFp.trim(), fName.trim() || "워크스페이스", fToken.trim());
       await refresh();
     } catch (e: any) {
       err = String(e);
@@ -153,10 +167,11 @@
   <main>
     <div class="card" style="max-width:540px;margin:24px auto;">
       <div class="tabs2">
-        <button class="btn {onbMode === 'host' ? 'primary' : ''}" onclick={() => (onbMode = "host")}>새로 시작 (이 기기가 서버)</button>
+        <button class="btn {onbMode === 'host' ? 'primary' : ''}" onclick={() => (onbMode = "host")}>이 기기가 서버</button>
         <button class="btn {onbMode === 'join' ? 'primary' : ''}" onclick={() => (onbMode = "join")}>참여하기</button>
+        <button class="btn {onbMode === 'found' ? 'primary' : ''}" onclick={() => (onbMode = "found")}>기존 서버에 만들기</button>
       </div>
-      {#if status?.join_error}<div class="warn-banner">가입 실패: {status.join_error}<br />초대 링크를 다시 확인해 주세요.</div>{/if}
+      {#if status?.join_error}<div class="warn-banner">설정 실패: {status.join_error}<br />입력한 값(초대 링크 / 서버 주소·지문 / setup 토큰)을 다시 확인해 주세요.</div>{/if}
       {#if err}<div class="warn-banner">{err}</div>{/if}
 
       {#if onbMode === "host"}
@@ -164,6 +179,25 @@
         <label>워크스페이스 이름</label>
         <input bind:value={fName} placeholder="예) 디자인팀" />
         <div class="row"><button class="btn primary grow" disabled={busy} onclick={doHost}>이 기기를 서버로 만들기</button></div>
+      {:else if onbMode === "found"}
+        <p class="pill">
+          이미 사내망에 돌고 있는 <b>sb-server</b>(항상 켜둔 서버)에 워크스페이스를 새로 만듭니다.
+          아래 세 값은 서버 관리자가 <span class="mono">sb-server --init</span> 출력에서 알려줍니다.
+          <b>워크스페이스당 한 번</b>만 가능하고, 이후 참여자는 "참여하기"로 들어옵니다.
+        </p>
+        <label>서버 주소 (host:port)</label>
+        <input bind:value={fServer} placeholder="192.168.0.10:45871" />
+        <label>서버 지문 (64 hex)</label>
+        <input class="mono" bind:value={fFp} placeholder="서버 관리자에게 받은 지문" />
+        <label>워크스페이스 이름</label>
+        <input bind:value={fName} placeholder="예) 디자인팀" />
+        <label>setup 토큰 (1회용)</label>
+        <input class="mono" bind:value={fToken} placeholder="sb-server --init 출력의 setup 토큰" />
+        <div class="row">
+          <button class="btn primary grow" disabled={busy || !fServer || !fFp || !fToken} onclick={doFound}>
+            워크스페이스 만들기
+          </button>
+        </div>
       {:else}
         <p class="pill">동료가 보내준 <b>초대 링크</b>를 붙여넣으면 서버 주소·지문·코드가 자동 입력됩니다.</p>
         <label>초대 링크</label>
@@ -213,9 +247,9 @@
         </div>
       {/if}
       {#if status.joining}
-        <div class="warn-banner">가입 처리 중… 서버 연결 + 로그 검증 + 그룹 키 수신을 진행합니다.</div>
+        <div class="warn-banner">처리 중… 서버 연결 · 로그 검증 · 그룹 키 수신을 진행합니다.</div>
       {:else if status.connected && status.gk_present}
-        <div class="ok-banner">✅ 가입 완료 · 동기화 준비됨</div>
+        <div class="ok-banner">✅ 워크스페이스 준비됨 · 동기화 중</div>
       {:else if !status.gk_present}
         <div class="warn-banner">그룹 키 대기 중 — 초대한 멤버가 온라인이 되면 자동으로 완료됩니다.</div>
       {/if}

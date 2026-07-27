@@ -52,8 +52,26 @@ pub async fn host_workspace(
         .await
         .map_err(|e| e.to_string())?;
 
-    // 창립자로서 워크스페이스 생성 → 워커가 재연결하며 Claim.
     let mut core = state.lock().await;
+    // 이미 이 기기가 만든 워크스페이스가 있으면(역할 재설정 후 재호스팅 등) 다시 클레임하지
+    // 않는다 — 내장 서버는 로그를 영속하므로 이미 claimed 이고 재클레임은 거부된다.
+    // 기존 로그·GK 를 그대로 두고 재연결만 시킨다.
+    if !core.log.is_empty() {
+        if core.settings.server.workspace_name.is_none() {
+            core.settings.server.workspace_name = Some(name);
+        }
+        let _ = sb_store::files::save_json(&core.data_dir.join("settings.json"), &core.settings);
+        emit_status(&app, &core);
+        let rc = core.reconnect.clone();
+        drop(core);
+        rc.notify_one();
+        return Ok(HostInfo {
+            addr,
+            fingerprint_hex: hex(&fp),
+        });
+    }
+
+    // 창립자로서 워크스페이스 생성 → 워커가 재연결하며 Claim.
     let (genesis, wid) = sb_crypto::wslog::build_genesis(&core.identity, &name, now_ms());
     let gbytes = sb_crypto::wslog::entry_bytes(&genesis);
     let gk = sb_crypto::GroupKey::generate(0);
@@ -273,30 +291,49 @@ pub async fn configure_server(
     Ok(())
 }
 
-/// 워크스페이스 생성(창립자). GK 생성·genesis 준비 → 재연결 시 클레임.
+/// 워크스페이스 생성(창립자) — 별도로 돌고 있는 `sb-server` 에 setup 토큰으로 클레임한다.
+///
+/// 주소·지문 설정과 genesis/GK 준비를 **한 커맨드로** 처리한다: 둘을 나누면 그 사이에 워커가
+/// pending 없이 재연결해 게스트 레인에서 Hello 를 던지는 어중간한 상태가 생긴다.
+/// 실제 클레임 성공 여부는 워커가 AppendAck 를 받아 확인하고, 실패하면 온보딩으로 되돌린다.
 #[tauri::command]
 pub async fn create_workspace(
     app: AppHandle,
     state: State<'_, AppState>,
+    addr: String,
+    fingerprint_hex: String,
     name: String,
     setup_token: String,
     now_ms: u64,
 ) -> Result<(), String> {
+    let fp = hex32(&fingerprint_hex).ok_or("잘못된 지문(64 hex 필요)")?;
+    if setup_token.trim().is_empty() {
+        return Err("setup 토큰을 입력하세요".into());
+    }
     let mut core = state.lock().await;
+    if core.hosting {
+        return Err("이 기기가 이미 서버를 호스팅 중입니다".into());
+    }
     let (genesis, wid) = sb_crypto::wslog::build_genesis(&core.identity, &name, now_ms);
     let genesis_bytes = sb_crypto::wslog::entry_bytes(&genesis);
-    // GK_0 생성 → 엔진·keystore.
+    // GK_0 생성 → 엔진·keystore·current_gk(조인자 wrap 발급·프로필 봉인에 필요).
     let gk = sb_crypto::GroupKey::generate(0);
     persist_group_key(&core, &gk).map_err(|e| e.to_string())?;
-    core.engine.set_group_key(gk);
+    core.engine.set_group_key(gk.clone());
+    core.current_gk = Some(gk);
     core.gk_present = true;
     core.workspace_id = Some(wid);
+    core.settings.server.addr = Some(addr);
+    core.settings.server.fingerprint_hex = Some(fingerprint_hex);
     core.settings.server.workspace_name = Some(name);
+    core.server_fp = Some(fp);
     core.log = vec![genesis_bytes.clone()];
     core.pending = Some(PendingAction::Claim {
         genesis: genesis_bytes,
         token: setup_token,
     });
+    core.joining = true;
+    core.join_error = None;
     let _ = sb_store::files::save_json(&core.data_dir.join("settings.json"), &core.settings);
     emit_status(&app, &core);
     let rc = core.reconnect.clone();

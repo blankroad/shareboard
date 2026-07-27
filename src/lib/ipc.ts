@@ -62,8 +62,9 @@ export const api = {
   clearHistory: () => invoke("clear_history"),
   configureServer: (addr: string, fingerprint_hex: string, workspace_name?: string) =>
     invoke("configure_server", { addr, fingerprint_hex, workspace_name }),
-  createWorkspace: (name: string, setup_token: string) =>
-    invoke("create_workspace", { name, setup_token, now_ms: Date.now() }),
+  // 기존 sb-server 에 워크스페이스를 새로 만든다(창립자). 주소·지문 설정까지 한 번에 처리.
+  createWorkspace: (addr: string, fingerprint_hex: string, name: string, setup_token: string) =>
+    invoke("create_workspace", { addr, fingerprint_hex, name, setup_token, now_ms: Date.now() }),
   joinWorkspace: (code: string) => invoke("join_workspace", { code }),
   generateInvite: () => invoke<string>("generate_invite", { expires_at: Date.now() + 3600_000 }),
   generateInviteLink: () => invoke<string>("generate_invite_link"),

@@ -261,23 +261,16 @@ async fn session(app: &AppHandle, state: &AppState, mut handle: ClientHandle) {
     let pending = { state.lock().await.pending.clone() };
     match pending {
         Some(PendingAction::Claim { genesis, token }) => {
-            let _ = handle.out.send(C2s::ClaimWorkspace { token, genesis }).await;
-            // AppendAck 는 아래 루프에서 흡수. 창립자는 곧바로 멤버.
+            if let Err(e) = claim_workspace(state, &mut handle, genesis, token).await {
+                tracing::warn!("워크스페이스 생성 실패: {e}");
+                fail_onboarding(app, state, e, true).await;
+                return;
+            }
         }
         Some(PendingAction::Join { code }) => {
             if let Err(e) = guest_join(state, &mut handle, &code).await {
                 tracing::warn!("조인 실패: {e}");
-                // 실패를 UI에 확인시키고 온보딩으로 복귀(재시도 루프 방지).
-                let mut c = state.lock().await;
-                c.join_error = Some(e);
-                c.joining = false;
-                c.pending = None;
-                c.settings.server.addr = None;
-                c.settings.server.fingerprint_hex = None;
-                c.settings.server.workspace_name = None;
-                c.server_fp = None;
-                let _ = sb_store::files::save_json(&c.data_dir.join("settings.json"), &c.settings);
-                emit_status(app, &c);
+                fail_onboarding(app, state, e, false).await;
                 return;
             }
         }
@@ -650,6 +643,67 @@ fn try_set_gk_from_wrap(core: &mut Core, wrapped: &[u8]) {
     core.engine.set_group_key(gk.clone());
     core.current_gk = Some(gk);
     core.gk_present = true;
+}
+
+/// 온보딩(생성/조인) 실패 처리 — 사유를 UI 에 남기고 서버 설정을 지워 온보딩으로 되돌린다.
+/// pending 도 해제해 같은 실패를 무한 재시도하지 않는다.
+///
+/// `drop_workspace` 는 **생성 실패** 전용이다. 창립 시 만든 genesis·GK 는 서버가 받아들이기
+/// 전까지 순수 로컬 상태이므로, 클레임이 거부되면 그대로 두면 안 된다(서버 로그와 어긋난
+/// 유령 워크스페이스가 된다). keystore 의 group.key 는 다음 생성/조인 때 덮어써지므로 남겨둔다.
+async fn fail_onboarding(app: &AppHandle, state: &AppState, reason: String, drop_workspace: bool) {
+    let mut c = state.lock().await;
+    c.join_error = Some(reason);
+    c.joining = false;
+    c.pending = None;
+    if drop_workspace {
+        c.log.clear();
+        c.workspace_id = None;
+        c.current_gk = None;
+        c.gk_present = false;
+    }
+    c.settings.server.addr = None;
+    c.settings.server.fingerprint_hex = None;
+    c.settings.server.workspace_name = None;
+    c.server_fp = None;
+    let _ = sb_store::files::save_json(&c.data_dir.join("settings.json"), &c.settings);
+    emit_status(app, &c);
+}
+
+/// 창립자 클레임 (§4.3.2) — ClaimWorkspace 를 보내고 **응답을 확인**한다.
+///
+/// 서버는 토큰 불일치·이미 클레임됨·genesis 무효를 전부 `Error` 로 답한다. 응답을 버리면
+/// 서버가 거부한 워크스페이스를 앱이 성공으로 착각해(로컬 GK·genesis 보유) 아무도 참여할 수
+/// 없는 상태가 된다.
+async fn claim_workspace(
+    state: &AppState,
+    handle: &mut ClientHandle,
+    genesis: Vec<u8>,
+    token: String,
+) -> Result<(), String> {
+    handle
+        .out
+        .send(C2s::ClaimWorkspace { token, genesis })
+        .await
+        .map_err(|_| "전송 실패".to_string())?;
+    recv_claim_ack(handle).await?;
+    // 성공 즉시 pending 해제 — 이 세션이 Hello 전에 끊겨도 재연결 때 다시 클레임을 보내
+    // "이미 클레임됨" 으로 정상 워크스페이스를 실패 처리하는 일이 없도록 한다.
+    state.lock().await.pending = None;
+    Ok(())
+}
+
+/// ClaimWorkspace 응답 — AppendAck = 성공, Error = 실패 사유(서버 문구 그대로 UI 로).
+async fn recv_claim_ack(handle: &mut ClientHandle) -> Result<(), String> {
+    for _ in 0..50 {
+        match handle.inbox.recv().await {
+            Some(S2c::AppendAck { .. }) => return Ok(()),
+            Some(S2c::Error { detail, .. }) => return Err(detail),
+            Some(_) => continue,
+            None => return Err("서버 연결이 끊겼습니다".into()),
+        }
+    }
+    Err("서버 응답 없음".into())
 }
 
 /// 게스트 조인 플로우 (§4.3.4). 같은 연결에서 Add 후 멤버로 승격.
