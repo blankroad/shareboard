@@ -249,7 +249,10 @@ async fn main() -> anyhow::Result<()> {
     ha.out.send(C2s::Hello(hello(&a, 0, (0, [0u8; 32])))).await?;
     recv_until!(ha, S2c::Welcome(_) => ()).expect("welcome");
     let mut a_engine = SyncEngine::new(a.device_id(), gk0.clone(), cfg());
-    println!("[A] 워크스페이스 '디자인팀' 생성, 그룹 키 GK_0 보유  ({})", short(&a.device_id()));
+    println!(
+        "[A] 워크스페이스 '디자인팀' 생성, 그룹 키 GK_0 보유  ({})",
+        short(&a.device_id())
+    );
 
     println!("[A] (조인자마다 별도 1회용 초대 발급)\n");
 
@@ -293,9 +296,8 @@ async fn main() -> anyhow::Result<()> {
     let (hdr0, e2e0) = a_copy(&mut a_engine, &mut ha, "강퇴 전 메시지 (GK_0)").await?;
     let _ = (hdr0, e2e0);
     for (name, h, eng) in [("B", &mut hb, &mut b_engine), ("C", &mut hc, &mut c_engine)] {
-        let (origin, hdr, e2e) =
-            recv_until!(h, S2c::SignalFanout { origin, hdr, e2e } => (origin, hdr, e2e))
-                .unwrap_or_else(|| panic!("{name} fanout"));
+        let (origin, hdr, e2e) = recv_until!(h, S2c::SignalFanout { origin, hdr, e2e } => (origin, hdr, e2e))
+            .unwrap_or_else(|| panic!("{name} fanout"));
         match eng.on_remote_signal(origin, hdr, &e2e, now_ms()) {
             RemoteDecision::ApplyInline { plaintext, .. } => {
                 println!("[{name}] 복호 성공: \"{}\"", String::from_utf8_lossy(&plaintext));
@@ -434,7 +436,10 @@ async fn main() -> anyhow::Result<()> {
         dv.epoch,
         if ok_after { "성공" } else { "실패" }
     );
-    anyhow::ensure!(!ok_before && ok_after, "BUG 1: 반드시 로그 먼저 반영해야 채택 가능");
+    anyhow::ensure!(
+        !ok_before && ok_after,
+        "BUG 1: 반드시 로그 먼저 반영해야 채택 가능"
+    );
     let gk_d1 = GroupKey::from_bytes(rb_d.new_epoch, rb_d.group_key);
     let mut d_engine = SyncEngine::new(d.device_id(), gk_d1.clone(), cfg());
     println!("    D 로스터: {}명 (C 빠짐)\n", dv.members.len());
@@ -443,12 +448,14 @@ async fn main() -> anyhow::Result<()> {
     println!("─────────────  강퇴 후: 동기화 (GK_1)  ─────────────");
     let (hdr1, e2e1) = a_copy(&mut a_engine, &mut ha, "강퇴 후 메시지 (GK_1)").await?;
     for (name, h, eng) in [("B", &mut hb, &mut b_engine), ("D", &mut hd2, &mut d_engine)] {
-        let (origin, hdr, e2e) =
-            recv_until!(h, S2c::SignalFanout { origin, hdr, e2e } => (origin, hdr, e2e))
-                .unwrap_or_else(|| panic!("{name} fanout"));
+        let (origin, hdr, e2e) = recv_until!(h, S2c::SignalFanout { origin, hdr, e2e } => (origin, hdr, e2e))
+            .unwrap_or_else(|| panic!("{name} fanout"));
         match eng.on_remote_signal(origin, hdr, &e2e, now_ms()) {
             RemoteDecision::ApplyInline { plaintext, .. } => {
-                println!("[{name}] 복호 성공: \"{}\"  ✅", String::from_utf8_lossy(&plaintext));
+                println!(
+                    "[{name}] 복호 성공: \"{}\"  ✅",
+                    String::from_utf8_lossy(&plaintext)
+                );
             }
             o => panic!("[{name}] ApplyInline 기대: {o:?}"),
         }

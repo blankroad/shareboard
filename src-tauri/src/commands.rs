@@ -579,8 +579,7 @@ pub async fn revoke_member(
         if *did == me_id {
             continue;
         }
-        let wrap =
-            sb_crypto::seal_rotation(&mi.kem_pk, &ctx.wid, did, &blob).map_err(|e| e.to_string())?;
+        let wrap = sb_crypto::seal_rotation(&mi.kem_pk, &ctx.wid, did, &blob).map_err(|e| e.to_string())?;
         updates.push(sb_proto::KeyUpdate {
             to: *did,
             epoch: new_epoch,
