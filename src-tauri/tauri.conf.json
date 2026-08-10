@@ -46,6 +46,21 @@
     ],
     "category": "Utility",
     "shortDescription": "사내망 클립보드 동기화",
-    "longDescription": "사내망(LAN) 전용 크로스플랫폼 클립보드 동기화. E2E 암호화, 승인된 피어만."
+    "longDescription": "사내망(LAN) 전용 크로스플랫폼 클립보드 동기화. E2E 암호화, 승인된 피어만.",
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["Korean", "English"],
+        "displayLanguageSelector": false,
+        "compression": "lzma"
+      },
+      "wix": {
+        "upgradeCode": "e2a2776e-45d8-5c5f-b758-ec4c44e75ed7"
+      }
+    }
   }
 }

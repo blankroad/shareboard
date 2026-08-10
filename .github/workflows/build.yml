@@ -3,8 +3,11 @@ name: build
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
     branches: [main]
+  # 배포물만 따로 뽑고 싶을 때: Actions → build → Run workflow.
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
@@ -106,6 +109,57 @@ jobs:
       - name: cargo check (src-tauri)
         working-directory: src-tauri
         run: cargo check
+
+  # Windows 배포물 — 설치 파일(NSIS .exe) + MSI + 포터블 exe + sb-server.exe.
+  # PR 에서는 건너뛴다(release LTO 빌드가 무겁다). 필요하면 workflow_dispatch 로 수동 실행.
+  # 산출물: Actions 실행 페이지 → Artifacts → shareboard-windows-x64.
+  # v* 태그를 푸시하면 같은 파일들이 GitHub Release 에 첨부된다.
+  windows-bundle:
+    if: github.event_name != 'pull_request'
+    runs-on: windows-latest
+    permissions:
+      contents: write # 태그 푸시 시 릴리스 생성·업로드
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # 코어 워크스페이스(sb-server) + 앱 워크스페이스(src-tauri) 둘 다 캐시.
+          workspaces: |
+            .
+            src-tauri
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: 번들 빌드 (설치 파일 + 포터블 exe + 서버)
+        shell: pwsh
+        run: ./scripts/build-windows.ps1 -SkipInstall
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shareboard-windows-x64
+          path: release/*
+          if-no-files-found: error
+      - name: GitHub Release 첨부 (v* 태그 푸시)
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $files = (Get-ChildItem release -File).FullName
+          gh release view $env:GITHUB_REF_NAME 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $env:GITHUB_REF_NAME --title $env:GITHUB_REF_NAME --generate-notes
+            if ($LASTEXITCODE -ne 0) { throw '릴리스 생성 실패' }
+          }
+          gh release upload $env:GITHUB_REF_NAME @files --clobber
+          if ($LASTEXITCODE -ne 0) { throw '릴리스 업로드 실패' }
 
   # 공급망 게이트 (§13.2) — cargo-deny(라이선스·advisory).
   supply-chain:

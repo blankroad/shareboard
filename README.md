@@ -142,6 +142,33 @@ cargo build -p sb-server --release
 The Tauri app is a **separate Cargo workspace** (`src-tauri/`, excluded from the root workspace) so
 that GUI dependencies never slow down core-crate builds.
 
+### Windows installers and executables
+
+Windows artifacts are built by CI, because Tauri cannot cross-bundle for Windows from macOS or Linux
+(it needs the MSVC linker, WebView2 and NSIS). Every push to `main` — and every manual **Actions →
+build → Run workflow** — runs the `windows-bundle` job and uploads four files as the
+`shareboard-windows-x64` artifact:
+
+| File | Use |
+|---|---|
+| `shareboard_<ver>_x64-setup.exe` | **Installer (recommended).** Per-user install, so no administrator rights; registers the `shareboard://` deep link |
+| `shareboard_<ver>_x64_en-US.msi` | Managed deployment (group policy / Intune); needs administrator rights |
+| `shareboard-portable.exe` | Run without installing |
+| `sb-server.exe` | Standalone relay binary |
+
+Pushing a `v*` tag attaches the same four files to a GitHub Release. Pull requests skip the job — the
+release LTO build is expensive — so they only get the `cargo check`.
+
+On a Windows machine you can build the same set locally:
+
+```powershell
+pwsh -File scripts/build-windows.ps1        # → release/
+pwsh -File scripts/build-windows.ps1 -NoMsi # installer only
+```
+
+Firewall rules, the SmartScreen warning (packages are unsigned), code-signing configuration and the
+offline WebView2 option for air-gapped networks are covered in **[docs/WINDOWS.md](docs/WINDOWS.md)**.
+
 ---
 
 ## Usage guide
@@ -523,7 +550,8 @@ template images (monochrome + alpha).
 | `test` | 3-OS matrix: `fmt --check`, `clippy --all-targets`, `cargo test --workspace`, plus a Wayland-backend compile check on Linux |
 | `server-build` | Release build of `sb-server` inside an `ubuntu:22.04` container, pinning the glibc floor below the runner's; uploads the binary as an artifact |
 | `frontend` | `pnpm install --frozen-lockfile && pnpm build` |
-| `app-check` | 3-OS `cargo check` of `src-tauri` (bundling excluded — it needs signing certificates) |
+| `app-check` | 3-OS `cargo check` of `src-tauri` |
+| `windows-bundle` | Runs `scripts/build-windows.ps1` on `windows-latest`: installer, MSI, portable exe and `sb-server.exe` as an artifact; attaches them to a Release on `v*` tags. Skipped on pull requests |
 | `supply-chain` | `cargo-deny check advisories licenses bans sources` |
 
 `deny.toml`'s allow-list contains no GPL-family licences, so a GPL dependency fails the build
@@ -624,8 +652,9 @@ integration test, and the revocation path has a live four-member demo.
   needs verification on real Linux hardware.
 - **Concealed-content detection is macOS-only**; Linux and Windows hints are not read yet.
 - **UI is Korean-only** — no i18n layer yet.
-- **No signed packages.** `cargo tauri build` produces unsigned bundles; three-platform packaging and
-  code signing remain outstanding.
+- **No signed packages.** Windows installers and executables are now built automatically by CI, but
+  they are **unsigned** (SmartScreen warns on first run); macOS/Linux bundles are neither built by CI
+  nor signed or notarised. See [docs/WINDOWS.md](docs/WINDOWS.md) for the signing configuration.
 
 ---
 
