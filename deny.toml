@@ -15,6 +15,9 @@ allow = [
     "ISC",
     "Zlib",
     "MPL-2.0",
+    # Boost — MIT급 허용 라이선스(귀속 표시 의무 없음). Windows 클립보드 경로
+    # (arboard → clipboard-win → error-code)에서 들어온다.
+    "BSL-1.0",
     "Unicode-DFS-2016",
     "Unicode-3.0",
     "CC0-1.0",
