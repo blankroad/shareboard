@@ -6,9 +6,11 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::Path;
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tauri::{AppHandle, Emitter};
+use tokio::sync::Mutex;
 
 use sb_clipboard::{ChangeWatcher, ClipContent};
 use sb_core::{LocalOutcome, RemoteDecision};
@@ -200,8 +202,25 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
+/// 클립보드 워처 공유 핸들 — 로컬 감시 태스크와 원격 적용(write) 경로가 같은 워처를 쓴다.
+/// (macOS changeCount 상태를 공유해야 하고, 워처를 두 개 두면 서로의 write 를 새 클립으로 오인한다.)
+pub type SharedWatcher = Arc<Mutex<Box<dyn ChangeWatcher + Send>>>;
+
+/// 로컬 클립보드 감시 — **연결 여부와 무관하게** 앱 수명 동안 돈다.
+/// 히스토리는 오프라인·동기화 off 에서도 쌓여야 하고(팝업이 그걸 쓴다), 연결돼 있으면 신호까지 발행한다.
+async fn clipboard_loop(app: AppHandle, state: AppState, watcher: SharedWatcher) {
+    let mut ticker = tokio::time::interval(Duration::from_millis(400));
+    loop {
+        ticker.tick().await;
+        poll_clipboard(&app, &state, &watcher).await;
+    }
+}
+
 /// 워커 메인 — 재연결 루프.
 pub async fn run(app: AppHandle, state: AppState) {
+    let watcher: SharedWatcher = Arc::new(Mutex::new(sb_clipboard::system_watcher()));
+    tauri::async_runtime::spawn(clipboard_loop(app.clone(), state.clone(), watcher.clone()));
+
     // 재시작 시 호스팅 자동 재개(설정에 host=true 인 경우).
     let host_on_start = { state.lock().await.settings.server.host };
     if host_on_start {
@@ -236,7 +255,7 @@ pub async fn run(app: AppHandle, state: AppState) {
         match sb_net::connect(addr, fp, &identity).await {
             Ok(conn) => {
                 let handle = sb_net::spawn(conn);
-                session(&app, &state, handle).await;
+                session(&app, &state, &watcher, handle).await;
             }
             Err(e) => tracing::warn!("서버 연결 실패: {e}"),
         }
@@ -256,7 +275,7 @@ pub async fn run(app: AppHandle, state: AppState) {
 }
 
 /// 한 연결 세션.
-async fn session(app: &AppHandle, state: &AppState, mut handle: ClientHandle) {
+async fn session(app: &AppHandle, state: &AppState, watcher: &SharedWatcher, mut handle: ClientHandle) {
     // 온보딩 대기 작업.
     let pending = { state.lock().await.pending.clone() };
     match pending {
@@ -311,21 +330,16 @@ async fn session(app: &AppHandle, state: &AppState, mut handle: ClientHandle) {
     // 내 기기 이름을 다른 멤버에게 알림(GK 있으면).
     send_profile(state).await;
 
-    // 동기화 루프. macOS 는 changeCount 기반, 그 외는 폴링 (sb-clipboard::system_watcher).
-    let mut watcher = sb_clipboard::system_watcher();
-    let mut ticker = tokio::time::interval(Duration::from_millis(400));
+    // 수신 루프. 로컬 클립보드 감시는 연결과 무관하게 clipboard_loop 가 담당한다.
     let reconnect = { state.lock().await.reconnect.clone() };
     let mut fetches: HashMap<ContentId, (u64, Vec<u8>)> = HashMap::new();
 
     loop {
         tokio::select! {
-            _ = ticker.tick() => {
-                poll_clipboard(app, state, &mut *watcher).await;
-            }
             msg = handle.inbox.recv() => {
                 match msg {
                     Some(m) => {
-                        if !handle_msg(app, state, &mut *watcher, &mut fetches, &handle, m).await {
+                        if !handle_msg(app, state, watcher, &mut fetches, &handle, m).await {
                             break;
                         }
                     }
@@ -338,23 +352,44 @@ async fn session(app: &AppHandle, state: &AppState, mut handle: ClientHandle) {
 }
 
 /// 로컬 클립보드 변경 → 신호 발행.
-async fn poll_clipboard(app: &AppHandle, state: &AppState, watcher: &mut (dyn ChangeWatcher + Send)) {
-    let content = match watcher.poll() {
-        Ok(Some(c)) => c,
-        _ => return,
+async fn poll_clipboard(app: &AppHandle, state: &AppState, watcher: &SharedWatcher) {
+    // 워처 락은 여기서 놓는다 — 코어 락과 겹치지 않게(교착 방지).
+    let (content, concealed) = {
+        let mut w = watcher.lock().await;
+        match w.poll() {
+            Ok(Some(c)) => {
+                let concealed = w.is_concealed();
+                (c, concealed)
+            }
+            _ => return,
+        }
     };
     if content.bytes.len() as u64 > READ_HARD_LIMIT {
         tracing::warn!("클립보드가 READ_HARD_LIMIT 초과 — 스킵");
         return;
     }
     let mut core = state.lock().await;
-    if core.settings.privacy.exclude_concealed && watcher.is_concealed() {
+    if core.settings.privacy.exclude_concealed && concealed {
         return; // concealed(비밀번호 매니저) 제외 (§4.6)
     }
-    match core
+    let outcome = core
         .engine
-        .on_local_clipboard(content.kind, &content.bytes, now_ms())
-    {
+        .on_local_clipboard(content.kind, &content.bytes, now_ms());
+    tracing::debug!(
+        "로컬 클립 감지: {:?} {}B → {}",
+        content.kind,
+        content.bytes.len(),
+        match &outcome {
+            Ok(LocalOutcome::Echo) => "에코(무시)",
+            Ok(LocalOutcome::Emit(_)) if core.out.is_some() => "히스토리 + 발행",
+            Ok(LocalOutcome::Emit(_)) => "히스토리 (미연결 — 발행 안 함)",
+            Ok(_) => "히스토리만",
+            Err(_) => "히스토리만 (봉인 실패)",
+        }
+    );
+    match outcome {
+        // 에코(원격 write 되돌아옴)는 히스토리에도 남지 않는다 — 할 일 없음.
+        Ok(LocalOutcome::Echo) => {}
         Ok(LocalOutcome::Emit(sig)) => {
             core.cache_body(sig.hdr.id, content.bytes.clone());
             if let Some(out) = &core.out {
@@ -367,7 +402,15 @@ async fn poll_clipboard(app: &AppHandle, state: &AppState, watcher: &mut (dyn Ch
             }
             let _ = app.emit("history-updated", ());
         }
-        _ => {}
+        // 동기화 off·kind off·상한 초과, 그리고 봉인 실패까지 — 엔진은 이미 로컬 히스토리에
+        // 넣었다. 본문 캐시와 UI 갱신을 빠뜨리면 항목이 "복사 불가"로 남고 목록도 늦게 뜬다.
+        _ => {
+            let newest = core.engine.history().list().next().map(|i| i.id);
+            if let Some(id) = newest {
+                core.cache_body(id, content.bytes.clone());
+            }
+            let _ = app.emit("history-updated", ());
+        }
     }
 }
 
@@ -375,7 +418,7 @@ async fn poll_clipboard(app: &AppHandle, state: &AppState, watcher: &mut (dyn Ch
 async fn handle_msg(
     app: &AppHandle,
     state: &AppState,
-    watcher: &mut (dyn ChangeWatcher + Send),
+    watcher: &SharedWatcher,
     fetches: &mut HashMap<ContentId, (u64, Vec<u8>)>,
     handle: &ClientHandle,
     msg: S2c,
@@ -507,7 +550,7 @@ async fn handle_msg(
 async fn apply_signal(
     app: &AppHandle,
     state: &AppState,
-    watcher: &mut (dyn ChangeWatcher + Send),
+    watcher: &SharedWatcher,
     handle: &ClientHandle,
     origin: DeviceId,
     hdr: sb_proto::SignalHdr,
@@ -523,7 +566,7 @@ async fn apply_signal(
                 kind,
                 bytes: plaintext,
             };
-            let _ = watcher.write(&content);
+            let _ = watcher.lock().await.write(&content);
             let _ = app.emit("clipboard-synced", ());
             let _ = app.emit("history-updated", ());
         }
@@ -537,7 +580,7 @@ async fn apply_signal(
 async fn finish_fetch(
     app: &AppHandle,
     state: &AppState,
-    watcher: &mut (dyn ChangeWatcher + Send),
+    watcher: &SharedWatcher,
     id: ContentId,
     sealed: &[u8],
 ) {
@@ -550,7 +593,7 @@ async fn finish_fetch(
                 kind: applied.kind,
                 bytes: applied.plaintext,
             };
-            let _ = watcher.write(&content);
+            let _ = watcher.lock().await.write(&content);
             let _ = app.emit("clipboard-synced", ());
             let _ = app.emit("history-updated", ());
         }
