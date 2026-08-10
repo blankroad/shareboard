@@ -304,7 +304,13 @@ require macOS Accessibility permission.
 - **설정** (*Settings*) — see below.
 
 **Copying files:** select files in Finder/Explorer, press `Cmd/Ctrl+C`, then paste on another
-member's machine — they arrive as real files. Under the hood the file **names and contents are sealed
+member's machine — they arrive as real files. Any file type works; there is no extension filter.
+
+**Copying content from an app** (macOS): if the clipboard holds document data rather than a file
+reference — a PDF copied out of Preview, an Office/iWork fragment, RTF/HTML/SVG/CSV — shareboard
+wraps it into a file named `clipboard.<ext>` and syncs that, so it can be pasted as a file on the
+other machine. Formats it does not recognise are **reported in a banner with their UTI** instead of
+being dropped silently, so an unsupported app format is visible (and easy to add). Under the hood the file **names and contents are sealed
 inside the group-key ciphertext**, so the relay never learns either. Received files are written to
 `<data-dir>/received` and *that* copy is what lands on the clipboard, so pasting works in any app.
 Limits: no folders, at most 50 files per clip, and the total must fit `max_content_bytes`
@@ -644,7 +650,8 @@ Back this directory up. Losing `identity.bin` forces a new fingerprint on every 
 | `설정 실패: 이미 클레임됨` | That server already hosts a workspace — a server holds exactly one. Join it with an invite instead, or point `--init` at a fresh `data_dir` for a separate workspace. |
 | `그룹 키 대기 중` never clears | The member who invited you is offline. The key is delivered automatically the moment they reconnect; any other online member's invite works too. |
 | Hosting fails with a bind error | Port 45871 is already in use — often a second instance on the same machine. Only one instance per machine can host. |
-| Copying a file does nothing | Check 설정 → 동기화 → **파일 동기화** is on, that the total fits **한 번에 보낼 최대 크기**, and that it is not a folder (unsupported). On Linux file clips are ignored entirely. Run with `RUST_LOG=shareboard=debug` to see the reason. |
+| Copying a file does nothing | The app now says why in a banner: size limit, folder, permissions, iCloud placeholder, unsupported format (with the UTI), or 파일 동기화 off. Check 설정 → 동기화 → **파일 동기화** and **한 번에 보낼 최대 크기**. On Linux file clips are ignored entirely. `RUST_LOG=shareboard=debug` shows the same reasons in the log. |
+| Copying from a specific app does nothing | That app probably puts a *file promise* or an app-private format on the clipboard rather than a file URL — the banner names the format. Promises are not supported yet; copying the same file from Finder works. |
 | Received files are quarantined / SmartScreen warns | Intentional — 설정 → 파일 → **받은 파일 표시** marks them as coming from another machine. Turn it off if your fleet does not need it. |
 | Clipboard changes not picked up on Linux | Wayland native event watching is not implemented yet; the X11/XWayland `arboard` path polls every 400 ms. Under a strict Wayland-only compositor, detection may be unreliable. |
 | History shows items but 복사 is disabled | The body is no longer in the in-memory cache (it is bounded). Only cached items can be re-copied. |

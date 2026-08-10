@@ -13,6 +13,32 @@ use objc2::runtime::ProtocolObject;
 use objc2_app_kit::{NSPasteboard, NSPasteboardTypeFileURL, NSPasteboardWriting};
 use objc2_foundation::{NSArray, NSString, NSURL};
 
+/// 파일도 텍스트도 이미지도 아니지만 **데이터로 꺼낼 수 있는** 형식 → 붙일 확장자.
+/// 앱에서 복사한 콘텐츠(Preview 의 PDF, 워드 문서 조각 등)를 파일로 만들어 보내기 위한 표.
+/// 위에 있는 것이 우선(더 원본에 가까운 형식).
+const DATA_TYPES: &[(&str, &str)] = &[
+    ("com.adobe.pdf", "pdf"),
+    ("public.zip-archive", "zip"),
+    ("org.openxmlformats.wordprocessingml.document", "docx"),
+    ("org.openxmlformats.spreadsheetml.sheet", "xlsx"),
+    ("org.openxmlformats.presentationml.presentation", "pptx"),
+    ("com.microsoft.word.doc", "doc"),
+    ("com.microsoft.excel.xls", "xls"),
+    ("com.microsoft.powerpoint.ppt", "ppt"),
+    ("com.apple.iWork.Pages.sffpages", "pages"),
+    ("com.apple.iWork.Numbers.sffnumbers", "numbers"),
+    ("com.apple.iWork.Keynote.sffkey", "key"),
+    ("public.jpeg", "jpg"),
+    ("public.tiff", "tiff"),
+    ("com.compuserve.gif", "gif"),
+    ("public.svg-image", "svg"),
+    ("public.rtf", "rtf"),
+    ("public.html", "html"),
+    ("public.xml", "xml"),
+    ("public.json", "json"),
+    ("public.comma-separated-values-text", "csv"),
+];
+
 use crate::{ChangeWatcher, ClipContent, ClipError, ClipboardAccess};
 
 const CONCEALED_TYPES: &[&str] = &["org.nspasteboard.ConcealedType", "org.nspasteboard.TransientType"];
@@ -21,6 +47,44 @@ const CONCEALED_TYPES: &[&str] = &["org.nspasteboard.ConcealedType", "org.nspast
 pub fn change_count() -> isize {
     let pb = NSPasteboard::generalPasteboard();
     pb.changeCount()
+}
+
+/// 현재 pasteboard 가 제공하는 타입(UTI) 목록 — "왜 동기화가 안 되는지" 진단에 쓴다.
+pub fn available_types() -> Vec<String> {
+    let pb = NSPasteboard::generalPasteboard();
+    match pb.types() {
+        Some(list) => list.iter().map(|t| t.to_string()).collect(),
+        None => Vec::new(),
+    }
+}
+
+/// 클립보드는 바뀌었는데 읽을 수 있는 형식이 없을 때 사용자에게 보여줄 문장.
+/// 빈 클립보드(타입 없음)는 알릴 게 없으므로 `None`.
+pub fn unsupported_message() -> Option<String> {
+    let types = available_types();
+    if types.is_empty() {
+        return None;
+    }
+    // 일부 앱은 실제 파일 대신 "약속(promise)"만 올린다 — 우리가 읽을 실체가 없다.
+    if types
+        .iter()
+        .any(|t| t.contains("promised-file") || t.contains("promise"))
+    {
+        return Some(
+            "이 앱은 파일을 '약속(promise)' 형태로만 클립보드에 올려서 아직 지원하지 않습니다 —              Finder 에서 파일을 복사하면 동기화됩니다"
+                .into(),
+        );
+    }
+    let shown: Vec<&str> = types.iter().take(4).map(|s| s.as_str()).collect();
+    let more = types.len().saturating_sub(shown.len());
+    let list = if more > 0 {
+        format!("{} 외 {more}개", shown.join(", "))
+    } else {
+        shown.join(", ")
+    };
+    Some(format!(
+        "이 형식은 아직 동기화하지 않습니다 — {list}. (지원: 텍스트 · PNG 이미지 · 파일)"
+    ))
 }
 
 /// 현재 클립보드가 concealed/transient 마커를 가지고 있는가.
@@ -94,6 +158,22 @@ pub fn write_file_reference_urls(paths: &[PathBuf]) -> bool {
     pb.writeObjects(&NSArray::from_slice(&objs))
 }
 
+/// **테스트용** — 임의 UTI 로 *바이너리 데이터*를 올린다(앱에서 콘텐츠 복사한 상태 재현).
+pub fn write_custom_data(uti: &str, bytes: &[u8]) -> bool {
+    use objc2_foundation::NSData;
+    let pb = NSPasteboard::generalPasteboard();
+    pb.clearContents();
+    let data = NSData::with_bytes(bytes);
+    pb.setData_forType(Some(&data), &NSString::from_str(uti))
+}
+
+/// **테스트용** — 임의 UTI 로 문자열을 올린다(지원하지 않는 형식 처리 검증).
+pub fn write_custom_type(uti: &str, value: &str) -> bool {
+    let pb = NSPasteboard::generalPasteboard();
+    pb.clearContents();
+    pb.setString_forType(&NSString::from_str(value), &NSString::from_str(uti))
+}
+
 /// 경로들을 파일 URL 로 pasteboard 에 올린다(Finder 붙여넣기 가능). 성공 여부 반환.
 pub fn write_file_paths(paths: &[PathBuf]) -> bool {
     let pb = NSPasteboard::generalPasteboard();
@@ -109,6 +189,31 @@ pub fn write_file_paths(paths: &[PathBuf]) -> bool {
     let objs: Vec<&ProtocolObject<dyn NSPasteboardWriting>> =
         urls.iter().map(|u| ProtocolObject::from_ref(&**u)).collect();
     pb.writeObjects(&NSArray::from_slice(&objs))
+}
+
+/// 텍스트·이미지·파일이 아니지만 데이터로 읽히는 클립 → `(확장자, 바이트)`.
+///
+/// "다른 앱에서 복사했는데 shareboard 에 안 보인다"의 대부분이 이 경우다 — 파일 URL 이 아니라
+/// 콘텐츠 자체가 올라온 것이므로, 파일로 만들어 보내면 상대 기기에서 파일로 붙여넣을 수 있다.
+pub fn read_data_as_file() -> Option<(String, Vec<u8>)> {
+    let pb = NSPasteboard::generalPasteboard();
+    let available = available_types();
+    for (uti, ext) in DATA_TYPES {
+        if !available.iter().any(|t| t == uti) {
+            continue;
+        }
+        if let Some(d) = pb.dataForType(&NSString::from_str(uti)) {
+            let bytes = d.to_vec();
+            if !bytes.is_empty() {
+                tracing::debug!(
+                    "클립보드 데이터 형식 {uti} → {ext} 파일로 처리 ({}B)",
+                    bytes.len()
+                );
+                return Some(((*ext).to_string(), bytes));
+            }
+        }
+    }
+    None
 }
 
 /// changeCount 기반 watcher. 카운터가 바뀐 순간에만 `access` 로 콘텐츠를 읽는다.
@@ -129,11 +234,18 @@ impl<A: ClipboardAccess> ChangeCountWatcher<A> {
 impl<A: ClipboardAccess> ChangeWatcher for ChangeCountWatcher<A> {
     fn poll(&mut self) -> Result<Option<ClipContent>, ClipError> {
         let c = change_count();
-        if c != self.last {
-            self.last = c;
-            self.access.read() // 정수 비교로 변경 확인된 경우에만 실제 read (D8)
-        } else {
-            Ok(None)
+        if c == self.last {
+            return Ok(None);
+        }
+        self.last = c;
+        match self.access.read() {
+            // 정수 비교로 변경 확인된 경우에만 실제 read (D8)
+            // 바뀐 건 확실한데 읽을 형식이 없다 → 조용히 넘기지 않고 이유를 올린다.
+            Ok(None) => match unsupported_message() {
+                Some(why) => Err(ClipError::Skipped(why)),
+                None => Ok(None), // 빈 클립보드 — 알릴 것 없음
+            },
+            other => other,
         }
     }
 

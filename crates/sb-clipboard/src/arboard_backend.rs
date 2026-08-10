@@ -71,10 +71,18 @@ impl ClipboardAccess for ArboardAccess {
                 return Ok(Some(ClipContent::text(t)));
             }
         }
-        match cb.get_image() {
-            Ok(img) => Ok(Some(ClipContent::image_png(rgba_to_png(img)?))),
-            Err(_) => Ok(None),
+        if let Ok(img) = cb.get_image() {
+            return Ok(Some(ClipContent::image_png(rgba_to_png(img)?)));
         }
+
+        // 마지막 폴백: 앱에서 복사한 데이터(Preview 의 PDF, 문서 조각 등)를 파일로 만들어 보낸다.
+        // 이게 없으면 "클립보드엔 있는데 shareboard 엔 안 보인다"가 된다.
+        #[cfg(target_os = "macos")]
+        if let Some((ext, data)) = crate::macos::read_data_as_file() {
+            return crate::files::bundle_from_data(&format!("clipboard.{ext}"), data).map(Some);
+        }
+
+        Ok(None)
     }
 
     fn write(&self, content: &ClipContent) -> Result<(), ClipError> {

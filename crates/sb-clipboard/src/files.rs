@@ -184,6 +184,24 @@ pub fn bundle_from_paths(paths: &[PathBuf]) -> Result<ClipContent, ClipError> {
         .map_err(|e| ClipError::Access(format!("파일 번들 인코딩 실패: {e}")))
 }
 
+/// 바이트 한 덩이를 파일 하나짜리 `Files` 클립으로 만든다(앱에서 복사한 데이터용).
+pub fn bundle_from_data(name: &str, data: Vec<u8>) -> Result<ClipContent, ClipError> {
+    if data.len() as u64 > READ_HARD_LIMIT {
+        return Err(ClipError::Skipped(format!(
+            "복사한 콘텐츠가 너무 큽니다 — {} (상한 {})",
+            mib(data.len() as u64),
+            mib(READ_HARD_LIMIT)
+        )));
+    }
+    let bundle = FileBundle::new(vec![FileEntry {
+        name: sb_proto::files::nfc(name),
+        data,
+    }]);
+    sb_proto::encode(&bundle)
+        .map(ClipContent::files)
+        .map_err(|e| ClipError::Access(format!("파일 번들 인코딩 실패: {e}")))
+}
+
 /// `Files` 콘텐츠 바이트 → 번들.
 pub fn bundle_from_bytes(bytes: &[u8]) -> Result<FileBundle, ClipError> {
     sb_proto::decode(bytes).map_err(|e| ClipError::Access(format!("파일 번들 디코딩 실패: {e}")))
@@ -242,6 +260,18 @@ mod tests {
         assert_eq!(bundle.files[1].name, "보고서.bin");
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn data_becomes_a_single_file_clip() {
+        let clip = bundle_from_data("clipboard.pdf", vec![7u8; 1000]).expect("번들");
+        let b = bundle_from_bytes(&clip.bytes).unwrap();
+        assert_eq!(b.files.len(), 1);
+        assert_eq!(b.files[0].name, "clipboard.pdf");
+        assert_eq!(b.files[0].data.len(), 1000);
+        // 크기 상한도 지킨다.
+        let too_big = bundle_from_data("x.bin", vec![0u8; READ_HARD_LIMIT as usize + 1]);
+        assert!(skip_reason(too_big).contains("너무 큽니다"));
     }
 
     #[test]

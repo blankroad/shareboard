@@ -386,7 +386,13 @@ async fn poll_clipboard(app: &AppHandle, state: &AppState, watcher: &SharedWatch
     }
     let mut core = state.lock().await;
     if core.settings.privacy.exclude_concealed && concealed {
-        return; // concealed(비밀번호 매니저) 제외 (§4.6)
+        // concealed(비밀번호 매니저) 제외 (§4.6) — 왜 사라졌는지 알려준다.
+        drop(core);
+        return notify_skip(
+            app,
+            "비밀번호 매니저 등이 '민감 콘텐츠'로 표시한 클립이라 제외했습니다 (설정 → 히스토리/개인정보)"
+                .into(),
+        );
     }
     let outcome = core
         .engine

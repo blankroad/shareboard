@@ -17,11 +17,32 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let access = ArboardAccess::new();
 
+    // --data <uti> <파일>: 그 파일 내용을 해당 UTI 데이터로 올린다(앱에서 복사한 상태 재현).
+    #[cfg(target_os = "macos")]
+    if args.first().map(|a| a == "--data").unwrap_or(false) && args.len() >= 3 {
+        let bytes = std::fs::read(&args[2]).expect("파일 읽기");
+        let ok = sb_clipboard::macos::write_custom_data(&args[1], &bytes);
+        println!("{} 데이터 {}B 올림: {ok}", args[1], bytes.len());
+        println!("타입 목록: {:?}", sb_clipboard::macos::available_types());
+        println!();
+    }
+
+    // --type <uti>: 지원하지 않는 형식을 흉내내 올린다(macOS, 진단 검증용).
+    #[cfg(target_os = "macos")]
+    if args.first().map(|a| a == "--type").unwrap_or(false) && args.len() >= 2 {
+        let ok = sb_clipboard::macos::write_custom_type(&args[1], "x");
+        println!("커스텀 타입 {} 올림: {ok}", args[1]);
+        println!("타입 목록: {:?}", sb_clipboard::macos::available_types());
+        println!("안내 문구: {:?}", sb_clipboard::macos::unsupported_message());
+        return;
+    }
+
     // --ref: Finder 처럼 "파일 참조 URL"(file:///.file/id=…) 형태로 올린다(macOS).
     let as_ref = args.first().map(|a| a == "--ref").unwrap_or(false);
+    let is_data = args.first().map(|a| a == "--data").unwrap_or(false);
     let args: Vec<String> = if as_ref { args[1..].to_vec() } else { args };
 
-    if !args.is_empty() {
+    if !args.is_empty() && !is_data {
         let paths: Vec<PathBuf> = args.iter().map(PathBuf::from).collect();
         if as_ref {
             #[cfg(target_os = "macos")]
