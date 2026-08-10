@@ -6,6 +6,7 @@
 
 mod commands;
 mod core;
+mod thumb;
 mod worker;
 
 use std::sync::Arc;
@@ -74,6 +75,7 @@ fn build_core() -> Core {
         engine,
         history,
         body_cache: Default::default(),
+        thumb_cache: Default::default(),
         members: Vec::new(),
         server_fp,
         connected: false,
@@ -199,6 +201,7 @@ fn main() {
             commands::update_settings,
             commands::set_sync_enabled,
             commands::get_history,
+            commands::get_thumbnail,
             commands::copy_history_item,
             commands::delete_history_item,
             commands::set_pinned,

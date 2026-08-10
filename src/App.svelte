@@ -1,11 +1,13 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api, on, type Status, type Member, type HistoryItem, type AppInfo } from "./lib/ipc";
+  import { api, on, type Status, type Member, type HistoryItem, type AppInfo, type Thumb } from "./lib/ipc";
 
   let info = $state<AppInfo | null>(null);
   let status = $state<Status | null>(null);
   let members = $state<Member[]>([]);
   let history = $state<HistoryItem[]>([]);
+  /// 이미지 썸네일 캐시. 키에 has_body 를 섞어, 본문이 나중에 도착하면 다시 시도한다.
+  let thumbs = $state<Record<string, Thumb | null>>({});
   let tab = $state<"overview" | "members" | "history" | "settings">("overview");
 
   // 온보딩 — host: 이 기기가 서버 / join: 초대로 참여 / found: 기존 sb-server 에 새로 만들기
@@ -27,11 +29,34 @@
 
   const configured = $derived(!!status?.server_addr);
 
+  const thumbKey = (h: HistoryItem) => `${h.id}:${h.has_body ? 1 : 0}`;
+
+  /// 이미지 항목 썸네일을 항목별로 지연 로드한다(목록에 새로 등장한 것만).
+  async function loadThumbs(list: HistoryItem[]) {
+    for (const h of list) {
+      if (h.kind !== "image") continue;
+      const k = thumbKey(h);
+      if (k in thumbs) continue;
+      thumbs[k] = null; // 중복 요청 방지
+      try {
+        thumbs[k] = await api.getThumbnail(h.id);
+      } catch {}
+    }
+    // 사라진 항목의 썸네일 정리.
+    const alive = new Set(list.filter((h) => h.kind === "image").map(thumbKey));
+    for (const k of Object.keys(thumbs)) if (!alive.has(k)) delete thumbs[k];
+  }
+
+  function setHistory(h: HistoryItem[]) {
+    history = h;
+    void loadThumbs(h);
+  }
+
   async function refresh() {
     try {
       status = await api.getStatus();
       members = await api.getMembers();
-      history = await api.getHistory();
+      setHistory(await api.getHistory());
     } catch (e) {}
   }
 
@@ -41,7 +66,7 @@
     await refresh();
     on("status-changed", () => api.getStatus().then((s) => (status = s)));
     on("members-changed", () => api.getMembers().then((m) => (members = m)));
-    on("history-updated", () => api.getHistory().then((h) => (history = h)));
+    on("history-updated", () => api.getHistory().then(setHistory));
   });
 
   async function doHost() {
@@ -147,6 +172,12 @@
 
   function fmtTime(ms: number) {
     return new Date(ms).toLocaleTimeString();
+  }
+
+  function fmtSize(n: number) {
+    if (n >= 1024 * 1024) return `${(n / 1048576).toFixed(1)} MB`;
+    if (n >= 1024) return `${Math.round(n / 1024)} KB`;
+    return `${n} B`;
   }
 </script>
 
@@ -329,7 +360,18 @@
           {#each history as h}
             <div class="hist-item">
               <span class="kind-tag">{h.kind}</span>
-              <span class="preview">{h.preview || "(이미지)"}</span>
+              {#if h.kind === "image"}
+                {@const t = thumbs[thumbKey(h)]}
+                {#if t}
+                  <img class="thumb" src={t.data_url} alt="클립보드 이미지" title="{t.width}×{t.height}" />
+                  <span class="preview">이미지 · {t.width}×{t.height} · {fmtSize(h.size)}</span>
+                {:else}
+                  <span class="thumb thumb-empty" aria-hidden="true">🖼</span>
+                  <span class="preview">이미지 · {fmtSize(h.size)}{h.has_body ? "" : " · 본문 없음"}</span>
+                {/if}
+              {:else}
+                <span class="preview">{h.preview}</span>
+              {/if}
               <span class="pill">{h.origin === "local" ? "내 기기" : h.origin.slice(0, 8)}</span>
               <span class="pill">{fmtTime(h.created_at)}</span>
               <button class="btn" disabled={!h.has_body} onclick={() => api.copyHistoryItem(h.id)}>복사</button>

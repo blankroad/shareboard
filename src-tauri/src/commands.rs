@@ -209,6 +209,40 @@ pub async fn get_history(state: State<'_, AppState>) -> Result<Vec<HistoryItemVi
     Ok(out)
 }
 
+/// 이미지 항목 썸네일(data URL). 이미지가 아니거나 본문이 캐시에 없으면 `None`.
+/// UI 는 항목별로 지연 호출하고, 생성 결과는 앱이 캐시한다.
+#[tauri::command]
+pub async fn get_thumbnail(state: State<'_, AppState>, id: String) -> Result<Option<ThumbView>, String> {
+    let id = hex32(&id).ok_or("잘못된 id")?;
+    let core = state.lock().await;
+    if let Some(t) = core.thumb_cache.get(&id) {
+        return Ok(Some(t.clone()));
+    }
+    let is_image = core
+        .engine
+        .history()
+        .get(&id)
+        .is_some_and(|i| i.kind == ContentKind::ImagePng);
+    if !is_image {
+        return Ok(None);
+    }
+    let Some(bytes) = core.body_cache.get(&id).cloned() else {
+        return Ok(None); // 원격 이미지 본문 도착 전 — UI 가 나중에 다시 요청한다.
+    };
+    drop(core); // 디코딩은 락 밖에서(대용량 PNG).
+
+    let thumb = tokio::task::spawn_blocking(move || crate::thumb::render(&bytes))
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if let Some(t) = thumb.clone() {
+        let mut core = state.lock().await;
+        core.thumb_cache.insert(id, t);
+        core.prune_thumbs();
+    }
+    Ok(thumb)
+}
+
 #[tauri::command]
 pub async fn copy_history_item(state: State<'_, AppState>, id: String) -> Result<bool, String> {
     let id = hex32(&id).ok_or("잘못된 id")?;
@@ -241,6 +275,7 @@ pub async fn delete_history_item(
     let mut core = state.lock().await;
     core.engine.history_mut().delete(&id);
     core.body_cache.remove(&id);
+    core.thumb_cache.remove(&id);
     let _ = core.history.delete(&id);
     let _ = app.emit("history-updated", ());
     Ok(())
@@ -260,6 +295,7 @@ pub async fn clear_history(app: AppHandle, state: State<'_, AppState>) -> Result
     let mut core = state.lock().await;
     core.engine.history_mut().clear();
     core.body_cache.clear();
+    core.thumb_cache.clear();
     let _ = core.history.clear();
     let _ = app.emit("history-updated", ());
     Ok(())

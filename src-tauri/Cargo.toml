@@ -22,6 +22,9 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 dirs = "5"
 if-addrs = "0.13"
+# 히스토리 이미지 썸네일(PNG 디코딩→축소→data URL). sb-clipboard 와 동일 버전·피처.
+image = { version = "0.25", default-features = false, features = ["png"] }
+base64 = "0.22"
 
 sb-proto = { path = "../crates/sb-proto" }
 sb-crypto = { path = "../crates/sb-crypto" }

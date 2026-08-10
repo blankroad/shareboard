@@ -45,6 +45,9 @@ export type HistoryItem = {
   has_body: boolean;
 };
 
+/// 이미지 썸네일 — data URL + **원본** 픽셀 크기.
+export type Thumb = { data_url: string; width: number; height: number };
+
 export type AppInfo = { app_version: string; proto_min: number; proto_max: number; device_id: string };
 
 export const api = {
@@ -56,6 +59,7 @@ export const api = {
   updateSettings: (settings: any) => invoke("update_settings", { settings }),
   setSyncEnabled: (enabled: boolean) => invoke("set_sync_enabled", { enabled }),
   getHistory: () => invoke<HistoryItem[]>("get_history"),
+  getThumbnail: (id: string) => invoke<Thumb | null>("get_thumbnail", { id }),
   copyHistoryItem: (id: string) => invoke<boolean>("copy_history_item", { id }),
   deleteHistoryItem: (id: string) => invoke("delete_history_item", { id }),
   setPinned: (id: string, pinned: boolean) => invoke("set_pinned", { id, pinned }),

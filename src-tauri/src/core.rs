@@ -30,6 +30,8 @@ pub struct Core {
     pub history: HistoryStore,
     /// 재복사를 위한 본문 캐시(메모리). 디스크 영속은 settings.history.persist_enabled 시 sb-store.
     pub body_cache: HashMap<ContentId, Vec<u8>>,
+    /// 이미지 항목 썸네일(data URL) 캐시. 본문에서 파생되므로 삭제 시 함께 정리한다.
+    pub thumb_cache: HashMap<ContentId, ThumbView>,
     pub members: Vec<MemberView>,
     pub server_fp: Option<[u8; 32]>,
     pub connected: bool,
@@ -68,6 +70,17 @@ impl Core {
             self.body_cache.clear();
         }
         self.body_cache.insert(id, bytes);
+    }
+
+    /// 썸네일 캐시 상한 유지 — 히스토리에서 사라진 항목의 썸네일을 버린다.
+    pub fn prune_thumbs(&mut self) {
+        let cap = self.settings.history.memory_max_items.max(1) * 2;
+        if self.thumb_cache.len() <= cap {
+            return;
+        }
+        let alive: std::collections::HashSet<ContentId> =
+            self.engine.history().list().map(|i| i.id).collect();
+        self.thumb_cache.retain(|id, _| alive.contains(id));
     }
 
     pub fn server_addr(&self) -> Option<String> {
@@ -131,6 +144,14 @@ pub struct HistoryItemView {
     pub preview: String,
     pub pinned: bool,
     pub has_body: bool,
+}
+
+/// 히스토리 이미지 썸네일. `width`/`height` 는 **원본** 크기(UI 라벨용).
+#[derive(Clone, Serialize)]
+pub struct ThumbView {
+    pub data_url: String,
+    pub width: u32,
+    pub height: u32,
 }
 
 #[derive(Clone, Serialize)]
