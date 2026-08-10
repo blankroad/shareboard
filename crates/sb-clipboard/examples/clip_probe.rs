@@ -17,11 +17,25 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let access = ArboardAccess::new();
 
+    // --ref: Finder 처럼 "파일 참조 URL"(file:///.file/id=…) 형태로 올린다(macOS).
+    let as_ref = args.first().map(|a| a == "--ref").unwrap_or(false);
+    let args: Vec<String> = if as_ref { args[1..].to_vec() } else { args };
+
     if !args.is_empty() {
         let paths: Vec<PathBuf> = args.iter().map(PathBuf::from).collect();
-        match access.write_file_paths(&paths) {
-            Ok(()) => println!("클립보드에 파일 {}개 올림", paths.len()),
-            Err(e) => println!("실패: {e}"),
+        if as_ref {
+            #[cfg(target_os = "macos")]
+            {
+                let ok = sb_clipboard::macos::write_file_reference_urls(&paths);
+                println!("파일 참조 URL 로 올림: {ok}");
+            }
+            #[cfg(not(target_os = "macos"))]
+            println!("--ref 는 macOS 전용");
+        } else {
+            match access.write_file_paths(&paths) {
+                Ok(()) => println!("클립보드에 파일 {}개 올림", paths.len()),
+                Err(e) => println!("실패: {e}"),
+            }
         }
         println!();
     }

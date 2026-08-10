@@ -8,6 +8,16 @@
 //! 그대로 경로에 쓰면 `../` 탈출이나 Windows 예약 이름에 노출된다.
 
 use serde::{Deserialize, Serialize};
+use unicode_normalization::UnicodeNormalization;
+
+/// 파일명을 NFC 로 정규화한다.
+///
+/// macOS 파일시스템은 이름을 **NFD**(자모 분해)로 돌려준다 — 한글 "문서" 가 ᄆ+ᅮ+ᆫ+… 로
+/// 쪼개진 형태다. 그대로 보내면 Windows·Linux 에 분해된 이름으로 저장되고, 눈에는 같아 보여도
+/// 검색·정렬·비교가 어긋난다. 상호운용 표준인 NFC 로 맞춰 보낸다.
+pub fn nfc(name: &str) -> String {
+    name.nfc().collect()
+}
 
 /// 파일 한 개(이름 + 내용).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -57,6 +67,7 @@ impl FileBundle {
 /// - 끝의 공백·점 제거(Windows 는 이런 이름을 만들 수 없다)
 /// - 바이트 길이 200 으로 절단(확장자 최대한 보존)
 pub fn safe_file_name(raw: &str) -> String {
+    let raw = &nfc(raw);
     // 경로 성분 제거 — 두 구분자 모두 자른다(윈도우에서 온 이름이 유닉스에 쓰일 수 있다).
     let base = raw
         .rsplit(['/', '\\'])
@@ -159,6 +170,15 @@ mod tests {
         let out = safe_file_name(&long);
         assert!(out.len() <= 200, "{}", out.len());
         assert!(out.ends_with(".png"));
+    }
+
+    #[test]
+    fn normalizes_names_to_nfc() {
+        // NFD(자모 분해) "문서.md" → NFC 로 합쳐진다.
+        let nfd = "\u{1106}\u{116e}\u{11ab}\u{1109}\u{1165}.md";
+        assert_ne!(nfd, "문서.md", "테스트 입력이 NFD 여야 한다");
+        assert_eq!(safe_file_name(nfd), "문서.md");
+        assert_eq!(nfc(nfd), "문서.md");
     }
 
     #[test]

@@ -38,40 +38,21 @@ pub fn is_concealed_now() -> bool {
     false
 }
 
-/// `file:///a%20b/c.txt` → `/a b/c.txt`. 실패하면 None.
-fn file_url_to_path(url: &str) -> Option<PathBuf> {
-    let rest = url.strip_prefix("file://")?;
-    // 호스트 부분(보통 비어 있음)을 건너뛰고 경로만 취한다.
-    let path_part = match rest.find('/') {
-        Some(i) => &rest[i..],
-        None => return None,
-    };
-    let decoded = percent_decode(path_part);
-    if decoded.is_empty() {
+/// 파일 URL 문자열 → 실제 파일시스템 경로.
+///
+/// **직접 파싱하면 안 된다.** Finder 는 `file:///.file/id=6571367.13007293` 같은
+/// *파일 참조 URL*(volume/file id 형태)을 올리는 경우가 있고, 그 문자열을 경로로 쓰면
+/// `Not a directory (os error 20)` 이 난다. `filePathURL` 로 경로 URL 로 바꿔야 한다.
+/// percent-encoding(%20 등) 해석도 NSURL 이 맡는다.
+fn file_url_to_path(url_str: &str) -> Option<PathBuf> {
+    let url = NSURL::URLWithString(&NSString::from_str(url_str))?;
+    // 참조 URL → 경로 URL. 이미 경로 URL 이면 그대로.
+    let path_url = url.filePathURL().unwrap_or(url);
+    let p = path_url.path()?.to_string();
+    if p.is_empty() {
         return None;
     }
-    Some(PathBuf::from(decoded))
-}
-
-/// 최소 percent-decoding(파일 URL 경로용).
-fn percent_decode(s: &str) -> String {
-    let b = s.as_bytes();
-    let mut out: Vec<u8> = Vec::with_capacity(b.len());
-    let mut i = 0;
-    while i < b.len() {
-        if b[i] == b'%' && i + 2 < b.len() {
-            let hi = (b[i + 1] as char).to_digit(16);
-            let lo = (b[i + 2] as char).to_digit(16);
-            if let (Some(h), Some(l)) = (hi, lo) {
-                out.push((h * 16 + l) as u8);
-                i += 3;
-                continue;
-            }
-        }
-        out.push(b[i]);
-        i += 1;
-    }
-    String::from_utf8_lossy(&out).into_owned()
+    Some(PathBuf::from(p))
 }
 
 /// 클립보드의 파일 URL 목록 → 경로. 파일 클립이 아니면 빈 Vec.
@@ -93,6 +74,24 @@ pub fn read_file_paths() -> Vec<PathBuf> {
         }
     }
     out
+}
+
+/// **테스트용** — Finder 처럼 *파일 참조 URL*(`file:///.file/id=…`)을 pasteboard 에 올린다.
+/// 이 형태를 우리가 해석할 수 있는지 실기기에서 확인할 때 쓴다(clip_probe --ref).
+pub fn write_file_reference_urls(paths: &[PathBuf]) -> bool {
+    let pb = NSPasteboard::generalPasteboard();
+    pb.clearContents();
+    let refs: Vec<objc2::rc::Retained<NSURL>> = paths
+        .iter()
+        .filter_map(|p| p.to_str())
+        .filter_map(|s| NSURL::fileURLWithPath(&NSString::from_str(s)).fileReferenceURL())
+        .collect();
+    if refs.is_empty() {
+        return false;
+    }
+    let objs: Vec<&ProtocolObject<dyn NSPasteboardWriting>> =
+        refs.iter().map(|u| ProtocolObject::from_ref(&**u)).collect();
+    pb.writeObjects(&NSArray::from_slice(&objs))
 }
 
 /// 경로들을 파일 URL 로 pasteboard 에 올린다(Finder 붙여넣기 가능). 성공 여부 반환.
@@ -156,5 +155,60 @@ impl<A: ClipboardAccess> ChangeWatcher for ChangeCountWatcher<A> {
 
     fn is_concealed(&self) -> bool {
         is_concealed_now()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::MetadataExt;
+
+    /// 같은 파일을 가리키는가(경로 문자열은 NFD/NFC·심볼릭링크로 달라질 수 있다).
+    fn same_file(a: &std::path::Path, b: &std::path::Path) -> bool {
+        match (std::fs::metadata(a), std::fs::metadata(b)) {
+            (Ok(x), Ok(y)) => (x.ino(), x.dev()) == (y.ino(), y.dev()),
+            _ => false,
+        }
+    }
+
+    /// Finder 는 `file:///.file/id=…` 형태(파일 참조 URL)를 올린다. 문자열을 그대로 경로로
+    /// 쓰면 `Not a directory (os error 20)` 이 나므로 반드시 경로 URL 로 바꿔야 한다.
+    #[test]
+    fn resolves_finder_style_file_reference_url() {
+        let dir = std::env::temp_dir().join(format!("sb-refurl-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("노트.md");
+        std::fs::write(&file, b"# hi").unwrap();
+
+        let url = NSURL::fileURLWithPath(&NSString::from_str(file.to_str().unwrap()));
+        let reference = url.fileReferenceURL().expect("파일 참조 URL");
+        let as_string = reference.absoluteString().unwrap().to_string();
+        assert!(as_string.contains("/.file/id="), "{as_string}");
+
+        let resolved = file_url_to_path(&as_string).expect("경로 복원");
+        assert!(
+            same_file(&resolved, &file),
+            "참조 URL 이 실제 파일로 해석되어야 한다: {resolved:?}"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 일반 경로 URL(퍼센트 인코딩 포함)도 그대로 처리된다.
+    #[test]
+    fn resolves_plain_file_url_with_percent_encoding() {
+        let dir = std::env::temp_dir().join(format!("sb-plainurl-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("a b 문서.md");
+        std::fs::write(&file, b"x").unwrap();
+
+        let url = NSURL::fileURLWithPath(&NSString::from_str(file.to_str().unwrap()));
+        let s = url.absoluteString().unwrap().to_string();
+        assert!(s.contains("%20"), "{s}");
+        // macOS 는 경로를 NFD 로 돌려주므로 문자열 비교 대신 같은 파일인지(inode) 확인한다.
+        let resolved = file_url_to_path(&s).unwrap();
+        assert!(same_file(&resolved, &file), "{resolved:?} vs {file:?}");
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

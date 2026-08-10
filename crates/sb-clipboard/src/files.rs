@@ -159,9 +159,10 @@ pub fn bundle_from_paths(paths: &[PathBuf]) -> Result<ClipContent, ClipError> {
     let mut files = Vec::with_capacity(targets.len());
     let mut read_error: Option<String> = None;
     for p in targets {
+        // macOS 는 NFD 로 돌려주므로 보내기 전에 NFC 로 맞춘다(§파일명 정규화).
         let name = p
             .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
+            .map(|n| sb_proto::files::nfc(&n.to_string_lossy()))
             .unwrap_or_else(|| "unnamed".into());
         match std::fs::read(p) {
             Ok(data) => files.push(FileEntry { name, data }),
