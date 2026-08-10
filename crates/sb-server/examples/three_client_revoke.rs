@@ -40,6 +40,7 @@ fn cfg() -> EngineConfig {
         enabled: true,
         sync_text: true,
         sync_images: true,
+        sync_files: true,
         max_content_bytes: 10 * 1024 * 1024,
         history_cap: 30,
     }

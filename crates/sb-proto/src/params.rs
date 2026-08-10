@@ -2,7 +2,9 @@
 
 // ── 버전 ──
 pub const PROTO_MIN: u16 = 2;
-pub const PROTO_MAX: u16 = 2;
+/// 3 = 파일 클립보드(`ContentKind::Files`) 추가. MIN 은 2 로 남겨 구 버전과도 접속은 되지만,
+/// 구 버전 클라는 Files 신호를 복호하지 못해 무시한다(텍스트·이미지는 정상).
+pub const PROTO_MAX: u16 = 3;
 
 // ── 프레이밍 (§5.1) ──
 /// Member lane 최대 프레임.
@@ -19,6 +21,8 @@ pub const CHUNK_SIZE: usize = 64 * 1024;
 pub const MAX_CONTENT_SIZE_DEFAULT: u64 = 10 * 1024 * 1024;
 pub const MAX_CONTENT_SIZE_MIN: u64 = 1 * 1024 * 1024;
 pub const MAX_CONTENT_SIZE_MAX: u64 = 100 * 1024 * 1024;
+/// 한 클립에 담을 파일 개수 상한 — 초과 시 파일 클립 자체를 건너뛴다.
+pub const MAX_FILES_PER_CLIP: usize = 50;
 /// 로컬 read 절대 상한 — 초과 시 read 자체 중단(§3.2).
 pub const READ_HARD_LIMIT: u64 = 32 * 1024 * 1024;
 /// zstd 압축 임계(텍스트, **암호화 전**).
@@ -101,6 +105,8 @@ mod tests {
         assert!(MAX_CONTENT_SIZE_DEFAULT <= MAX_CONTENT_SIZE_MAX);
         assert!(READ_HARD_LIMIT >= MAX_CONTENT_SIZE_MAX / 4);
         assert!(GUEST_MAX_FRAME < MAX_FRAME);
-        assert_eq!(PROTO_MIN, PROTO_MAX, "v2 단일 버전");
+        // proto 3(파일 클립)부터 MIN < MAX — 구 버전(2)과도 접속은 되고, Files 만 무시된다.
+        assert!(PROTO_MIN <= PROTO_MAX);
+        assert_eq!(PROTO_MAX, 3);
     }
 }

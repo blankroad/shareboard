@@ -186,6 +186,11 @@ impl SyncEngine {
         let preview = match kind {
             ContentKind::Text => crate::history::text_preview(&String::from_utf8_lossy(plaintext)),
             ContentKind::ImagePng => format!("[이미지 {} bytes]", plaintext.len()),
+            // 파일명은 GK 암호문 안에만 있던 값 — 로컬 UI 표시용으로만 꺼낸다.
+            ContentKind::Files => match sb_proto::decode::<sb_proto::FileBundle>(plaintext) {
+                Ok(b) => b.preview(),
+                Err(_) => format!("[파일 {} bytes]", plaintext.len()),
+            },
         };
         self.history.add(HistoryItem {
             id,
@@ -221,6 +226,7 @@ impl SyncEngine {
         let kind_ok = match kind {
             ContentKind::Text => self.cfg.sync_text,
             ContentKind::ImagePng => self.cfg.sync_images,
+            ContentKind::Files => self.cfg.sync_files,
         };
         if !kind_ok {
             return Ok(LocalOutcome::KindDisabled);
@@ -380,6 +386,7 @@ mod tests {
             enabled: true,
             sync_text: true,
             sync_images: true,
+            sync_files: true,
             max_content_bytes: 10 * 1024 * 1024,
             history_cap: 30,
         };

@@ -262,6 +262,7 @@ pub async fn get_history(state: State<'_, AppState>) -> Result<Vec<HistoryItemVi
             kind: match it.kind {
                 ContentKind::Text => "text".into(),
                 ContentKind::ImagePng => "image".into(),
+                ContentKind::Files => "files".into(),
             },
             origin: match it.origin {
                 Origin::Local => "local".into(),
@@ -324,13 +325,46 @@ pub async fn copy_history_item(state: State<'_, AppState>, id: String) -> Result
         .get(&id)
         .map(|i| i.kind)
         .unwrap_or(ContentKind::Text);
+    let data_dir = core.data_dir.clone();
+    let mark = core.settings.privacy.mark_received_files;
     drop(core);
+
     // OS 클립보드에 쓰기 → 워커의 폴이 감지해 자연스럽게 재전파.
-    let content = ClipContent { kind, bytes };
-    sb_clipboard::arboard_backend::ArboardAccess::new()
-        .write(&content)
-        .map_err(|e| e.to_string())?;
+    let access = sb_clipboard::arboard_backend::ArboardAccess::new();
+    if kind == ContentKind::Files {
+        // 파일은 실체가 있어야 붙여넣기가 된다 — 받은 파일 폴더에 (없으면) 다시 만든다.
+        let bundle = sb_clipboard::files::bundle_from_bytes(&bytes).map_err(|e| e.to_string())?;
+        let paths = crate::received::materialize(&data_dir, &bundle, mark).map_err(|e| e.to_string())?;
+        access.write_file_paths(&paths).map_err(|e| e.to_string())?;
+    } else {
+        let content = ClipContent { kind, bytes };
+        access.write(&content).map_err(|e| e.to_string())?;
+    }
     Ok(true)
+}
+
+/// 받은 파일 폴더 경로(UI 표시용).
+#[tauri::command]
+pub async fn get_received_dir(state: State<'_, AppState>) -> Result<String, String> {
+    let dir = crate::received::received_dir(&state.lock().await.data_dir);
+    Ok(dir.to_string_lossy().into_owned())
+}
+
+/// 받은 파일 폴더를 파일 관리자로 연다(없으면 만든다).
+#[tauri::command]
+pub async fn open_received_dir(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let dir = crate::received::received_dir(&state.lock().await.data_dir);
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    app.opener()
+        .open_path(dir.to_string_lossy(), None::<&str>)
+        .map_err(|e| e.to_string())
+}
+
+/// 이 플랫폼이 파일 클립보드를 지원하는가(UI 안내용 — Linux 는 아직 미지원).
+#[tauri::command]
+pub fn files_supported() -> bool {
+    sb_clipboard::files::files_supported()
 }
 
 #[tauri::command]

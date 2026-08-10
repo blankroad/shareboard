@@ -7,8 +7,11 @@
 //! concealed 감지: pasteboard 타입 목록에 `org.nspasteboard.ConcealedType`/`TransientType`
 //! 마커가 있으면 비밀번호 매니저 등 민감 콘텐츠로 간주해 동기화에서 제외한다.
 
-use objc2_app_kit::NSPasteboard;
-use objc2_foundation::NSString;
+use std::path::PathBuf;
+
+use objc2::runtime::ProtocolObject;
+use objc2_app_kit::{NSPasteboard, NSPasteboardTypeFileURL, NSPasteboardWriting};
+use objc2_foundation::{NSArray, NSString, NSURL};
 
 use crate::{ChangeWatcher, ClipContent, ClipError, ClipboardAccess};
 
@@ -33,6 +36,77 @@ pub fn is_concealed_now() -> bool {
         }
     }
     false
+}
+
+/// `file:///a%20b/c.txt` → `/a b/c.txt`. 실패하면 None.
+fn file_url_to_path(url: &str) -> Option<PathBuf> {
+    let rest = url.strip_prefix("file://")?;
+    // 호스트 부분(보통 비어 있음)을 건너뛰고 경로만 취한다.
+    let path_part = match rest.find('/') {
+        Some(i) => &rest[i..],
+        None => return None,
+    };
+    let decoded = percent_decode(path_part);
+    if decoded.is_empty() {
+        return None;
+    }
+    Some(PathBuf::from(decoded))
+}
+
+/// 최소 percent-decoding(파일 URL 경로용).
+fn percent_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' && i + 2 < b.len() {
+            let hi = (b[i + 1] as char).to_digit(16);
+            let lo = (b[i + 2] as char).to_digit(16);
+            if let (Some(h), Some(l)) = (hi, lo) {
+                out.push((h * 16 + l) as u8);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// 클립보드의 파일 URL 목록 → 경로. 파일 클립이 아니면 빈 Vec.
+pub fn read_file_paths() -> Vec<PathBuf> {
+    let pb = NSPasteboard::generalPasteboard();
+    let ty = unsafe { NSPasteboardTypeFileURL };
+    let mut out = Vec::new();
+    let Some(items) = pb.pasteboardItems() else {
+        return out;
+    };
+    for item in items.iter() {
+        if let Some(s) = item.stringForType(ty) {
+            if let Some(p) = file_url_to_path(&s.to_string()) {
+                out.push(p);
+            }
+        }
+    }
+    out
+}
+
+/// 경로들을 파일 URL 로 pasteboard 에 올린다(Finder 붙여넣기 가능). 성공 여부 반환.
+pub fn write_file_paths(paths: &[PathBuf]) -> bool {
+    let pb = NSPasteboard::generalPasteboard();
+    pb.clearContents();
+    let urls: Vec<objc2::rc::Retained<NSURL>> = paths
+        .iter()
+        .filter_map(|p| p.to_str())
+        .map(|s| NSURL::fileURLWithPath(&NSString::from_str(s)))
+        .collect();
+    if urls.is_empty() {
+        return false;
+    }
+    let objs: Vec<&ProtocolObject<dyn NSPasteboardWriting>> =
+        urls.iter().map(|u| ProtocolObject::from_ref(&**u)).collect();
+    pb.writeObjects(&NSArray::from_slice(&objs))
 }
 
 /// changeCount 기반 watcher. 카운터가 바뀐 순간에만 `access` 로 콘텐츠를 읽는다.
@@ -64,6 +138,12 @@ impl<A: ClipboardAccess> ChangeWatcher for ChangeCountWatcher<A> {
     fn write(&mut self, content: &ClipContent) -> Result<(), ClipError> {
         self.access.write(content)?;
         self.last = change_count(); // 우리 쓰기로 오른 카운터 흡수(에코 억제)
+        Ok(())
+    }
+
+    fn write_file_paths(&mut self, paths: &[PathBuf]) -> Result<(), ClipError> {
+        self.access.write_file_paths(paths)?;
+        self.last = change_count(); // 우리 쓰기로 오른 카운터 흡수
         Ok(())
     }
 

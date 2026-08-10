@@ -47,6 +47,7 @@ impl Settings {
             enabled: self.sync.enabled,
             sync_text: self.sync.sync_text,
             sync_images: self.sync.sync_images,
+            sync_files: self.sync.sync_files,
             max_content_bytes: self.sync.max_content_bytes,
             history_cap: self.history.memory_max_items,
         }
@@ -70,6 +71,9 @@ pub struct SyncSettings {
     pub sync_text: bool,
     #[serde(default = "tru")]
     pub sync_images: bool,
+    /// 파일 클립보드(Finder/탐색기 복사) 동기화. proto 3 이상 필요.
+    #[serde(default = "tru")]
+    pub sync_files: bool,
     #[serde(default = "default_max_content")]
     pub max_content_bytes: u64,
     #[serde(default = "tru")]
@@ -91,6 +95,7 @@ impl Default for SyncSettings {
             enabled: true,
             sync_text: true,
             sync_images: true,
+            sync_files: true,
             max_content_bytes: MAX_CONTENT_SIZE_DEFAULT,
             auto_apply_received: true,
             confirm_risky_content: true,
@@ -156,6 +161,10 @@ pub struct PrivacySettings {
     pub excluded_apps: Vec<String>,
     #[serde(default)]
     pub exclude_patterns: Vec<String>,
+    /// 받은 파일에 "다른 기기에서 왔음" 표시(macOS quarantine / Windows Zone.Identifier).
+    /// 실행형 파일을 무심코 여는 사고를 막는다. 사내에서만 쓰면 끌 수도 있다.
+    #[serde(default = "tru")]
+    pub mark_received_files: bool,
 }
 
 fn default_excluded_apps() -> Vec<String> {
@@ -175,6 +184,7 @@ impl Default for PrivacySettings {
             exclude_concealed: true,
             excluded_apps: default_excluded_apps(),
             exclude_patterns: Vec::new(),
+            mark_received_files: true,
         }
     }
 }
@@ -255,6 +265,7 @@ pub struct EngineConfig {
     pub enabled: bool,
     pub sync_text: bool,
     pub sync_images: bool,
+    pub sync_files: bool,
     pub max_content_bytes: u64,
     pub history_cap: usize,
 }

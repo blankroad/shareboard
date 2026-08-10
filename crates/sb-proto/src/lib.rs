@@ -13,6 +13,7 @@
 //! 이 크레이트는 순수 데이터·상수만 담는다. 암호 연산은 sb-crypto, I/O는 sb-net/sb-server 소관.
 
 pub mod e2e;
+pub mod files;
 pub mod ids;
 pub mod kinds;
 pub mod log;
@@ -21,6 +22,7 @@ pub mod params;
 pub mod wire;
 
 pub use e2e::{Profile, RotationBlob, SignalBody};
+pub use files::{safe_file_name, FileBundle, FileEntry};
 pub use ids::{hex32, short_id, ContentId, DeviceId, Epoch, Lamport, Locator, LwwKey};
 pub use kinds::{
     AbortReason, AppendRejectReason, ByeReason, ContentKind, EpochReason, ErrorCode, Platform, RejectReason,

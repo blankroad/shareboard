@@ -109,6 +109,9 @@
               <span class="qthumb qthumb-empty" aria-hidden="true">🖼</span>
               <span class="preview">이미지 · {fmtSize(h.size)}</span>
             {/if}
+          {:else if h.kind === "files"}
+            <span class="qthumb qthumb-empty" aria-hidden="true">📄</span>
+            <span class="preview">{h.preview} · {fmtSize(h.size)}</span>
           {:else}
             <span class="qthumb qthumb-empty" aria-hidden="true">T</span>
             <span class="preview">{h.preview}</span>

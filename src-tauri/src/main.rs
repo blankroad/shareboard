@@ -7,6 +7,7 @@
 mod commands;
 mod core;
 mod quick;
+mod received;
 mod thumb;
 mod worker;
 
@@ -251,6 +252,9 @@ fn main() {
             commands::host_workspace,
             commands::get_host_info,
             commands::toggle_quick,
+            commands::get_received_dir,
+            commands::open_received_dir,
+            commands::files_supported,
             commands::get_autostart,
             commands::set_autostart,
             commands::set_quick_hotkey,

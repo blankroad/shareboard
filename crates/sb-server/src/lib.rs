@@ -572,6 +572,7 @@ mod integration {
             enabled: true,
             sync_text: true,
             sync_images: true,
+            sync_files: true,
             max_content_bytes: 10 * 1024 * 1024,
             history_cap: 30,
         }
@@ -711,6 +712,129 @@ mod integration {
             matches!(dec, RemoteDecision::ApplyInline { .. }),
             "A 가 B 의 클립보드를 적용"
         );
+    }
+
+    /// 창립자 A + 조인자 B 가 같은 GK 로 릴레이에 붙은 상태를 만든다.
+    async fn joined_pair() -> (
+        sb_net::Connection,
+        sb_net::Connection,
+        SyncEngine,
+        SyncEngine,
+        Identity,
+        Identity,
+    ) {
+        init_crypto();
+        let server_id = Identity::generate();
+        let (scert_der, _) = server_id.tls_material().unwrap();
+        let server_fp = cert_fingerprint(&CertificateDer::from(scert_der));
+        let shared = Shared::new(Some(sha256(b"setup-token")));
+        let addr = start_server(shared, &server_id).await;
+
+        let a = Identity::generate();
+        let b = Identity::generate();
+
+        let (genesis, wid) = wslog::build_genesis(&a, "eng-team", 1);
+        let mut ca = sb_net::connect(addr, server_fp, &a).await.unwrap();
+        ca.send(C2s::ClaimWorkspace {
+            token: "setup-token".into(),
+            genesis: wslog::entry_bytes(&genesis),
+        })
+        .await
+        .unwrap();
+        assert!(matches!(ca.recv().await.unwrap(), S2c::AppendAck { seq: 0, .. }));
+
+        let grant = sb_crypto::generate_grant();
+        let gc = wslog::build_grant_cert(&a, grant.pk_der.clone(), 10_000, wid);
+        let head = wslog::entry_hash(&wslog::entry_bytes(&genesis));
+        let add = wslog::build_add(&grant.sk, gc, &b.public(), head, 1, 2);
+        ca.send(C2s::AppendEntry {
+            entry: wslog::entry_bytes(&add),
+        })
+        .await
+        .unwrap();
+        assert!(matches!(ca.recv().await.unwrap(), S2c::AppendAck { seq: 1, .. }));
+
+        let gk = GroupKey::from_bytes(0, [77u8; 32]);
+        let ea = SyncEngine::new(a.device_id(), gk.clone(), cfg());
+        let eb = SyncEngine::new(b.device_id(), gk, cfg());
+
+        let mut cb = sb_net::connect(addr, server_fp, &b).await.unwrap();
+        cb.send(C2s::Hello(Hello {
+            device_id: b.device_id(),
+            proto_min: sb_proto::params::PROTO_MIN,
+            proto_max: sb_proto::params::PROTO_MAX,
+            app_version: "test".into(),
+            epoch: 0,
+            log_head: (0, [0u8; 32]),
+        }))
+        .await
+        .unwrap();
+        assert!(matches!(cb.recv().await.unwrap(), S2c::Welcome(_)));
+
+        (ca, cb, ea, eb, a, b)
+    }
+
+    fn contains(hay: &[u8], needle: &[u8]) -> bool {
+        hay.windows(needle.len()).any(|w| w == needle)
+    }
+
+    /// 파일 클립(`ContentKind::Files`)이 릴레이를 거쳐 이름·내용 그대로 도착하고,
+    /// 서버가 보는 바이트에는 파일명이 없다.
+    #[tokio::test]
+    async fn file_clip_syncs_through_relay_without_leaking_names() {
+        let (mut ca, mut cb, mut ea, mut eb, a, _b) = joined_pair().await;
+
+        let bundle = sb_proto::FileBundle::new(vec![
+            sb_proto::FileEntry {
+                name: "보고서.pdf".into(),
+                data: vec![9u8; 3000],
+            },
+            sb_proto::FileEntry {
+                name: "notes.txt".into(),
+                data: b"hello files".to_vec(),
+            },
+        ]);
+        let plain = sb_proto::encode(&bundle).unwrap();
+
+        let sig = match ea.on_local_clipboard(ContentKind::Files, &plain, 1000).unwrap() {
+            LocalOutcome::Emit(s) => *s,
+            o => panic!("Emit 기대: {o:?}"),
+        };
+
+        // 서버가 만지는 두 바이트열(신호 e2e·본문 암호문)에 파일명이 노출되지 않는다.
+        assert!(!contains(&sig.e2e, "보고서.pdf".as_bytes()));
+        assert!(!contains(&sig.body_ct, "notes.txt".as_bytes()));
+
+        ca.send(C2s::ClipSignal {
+            hdr: sig.hdr.clone(),
+            e2e: sig.e2e.clone(),
+        })
+        .await
+        .unwrap();
+
+        let (origin, hdr, e2e) = recv_fanout(&mut cb).await;
+        assert_eq!(origin, a.device_id());
+        // 파일은 inline 대상이 아니다(텍스트만 inline) → fetch 경로를 탄다.
+        match eb.on_remote_signal(origin, hdr.clone(), &e2e, 1001) {
+            RemoteDecision::NeedFetch { id, kind, .. } => {
+                assert_eq!(id, sig.hdr.id);
+                assert_eq!(kind, ContentKind::Files);
+            }
+            o => panic!("NeedFetch 기대: {o:?}"),
+        }
+
+        // 보유자(A) 송신 캐시 → B 적용.
+        let ct = ea.serve_content(&hdr.id, 1002).expect("송신 캐시에 본문");
+        let applied = eb.on_content_fetched(hdr.id, &ct, 1003).unwrap();
+        assert_eq!(applied.kind, ContentKind::Files);
+
+        let back: sb_proto::FileBundle = sb_proto::decode(&applied.plaintext).unwrap();
+        assert_eq!(back, bundle, "이름·내용이 그대로 도착");
+
+        // 받는 쪽 히스토리 미리보기에는 파일명이 보인다(로컬 복호 후이므로).
+        let newest = eb.history().list().next().unwrap();
+        assert_eq!(newest.kind, ContentKind::Files);
+        assert!(newest.preview.contains("보고서.pdf"), "{}", newest.preview);
     }
 
     #[tokio::test]

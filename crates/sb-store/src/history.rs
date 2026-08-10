@@ -13,13 +13,14 @@ fn kind_to_i64(k: ContentKind) -> i64 {
     match k {
         ContentKind::Text => 0,
         ContentKind::ImagePng => 1,
+        ContentKind::Files => 2,
     }
 }
 fn kind_from_i64(v: i64) -> ContentKind {
-    if v == 1 {
-        ContentKind::ImagePng
-    } else {
-        ContentKind::Text
+    match v {
+        1 => ContentKind::ImagePng,
+        2 => ContentKind::Files,
+        _ => ContentKind::Text,
     }
 }
 

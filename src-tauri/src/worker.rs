@@ -19,7 +19,7 @@ use sb_crypto::wslog;
 use sb_crypto::{verify_chain, GroupKey};
 use sb_net::ClientHandle;
 use sb_proto::params::{CHUNK_SIZE, READ_HARD_LIMIT};
-use sb_proto::{C2s, ContentId, DeviceId, LogEntry, Platform, Profile, S2c};
+use sb_proto::{C2s, ContentId, ContentKind, DeviceId, LogEntry, Platform, Profile, S2c};
 use sb_store::FileKeyStore;
 
 use crate::commands::emit_status;
@@ -546,6 +546,49 @@ async fn handle_msg(
     true
 }
 
+/// 적용된 콘텐츠를 OS 클립보드에 올린다.
+///
+/// 파일은 바이트를 그대로 쓸 수 없다 — 디스크에 실체화한 뒤 그 **경로**를 클립보드에 올려야
+/// Finder/탐색기에서 붙여넣을 수 있다.
+async fn apply_to_clipboard(
+    app: &AppHandle,
+    state: &AppState,
+    watcher: &SharedWatcher,
+    kind: ContentKind,
+    bytes: Vec<u8>,
+) {
+    if kind == ContentKind::Files {
+        let (dir, mark) = {
+            let c = state.lock().await;
+            (c.data_dir.clone(), c.settings.privacy.mark_received_files)
+        };
+        let bundle = match sb_clipboard::files::bundle_from_bytes(&bytes) {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::warn!("받은 파일 번들 해석 실패: {e}");
+                return;
+            }
+        };
+        let count = bundle.files.len();
+        let paths = match crate::received::materialize(&dir, &bundle, mark) {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::warn!("받은 파일 저장 실패: {e}");
+                return;
+            }
+        };
+        tracing::debug!("파일 {count}개 저장 → 클립보드에 경로 올림");
+        if let Err(e) = watcher.lock().await.write_file_paths(&paths) {
+            tracing::warn!("파일 클립보드 쓰기 실패: {e}");
+        }
+    } else {
+        let content = ClipContent { kind, bytes };
+        let _ = watcher.lock().await.write(&content);
+    }
+    let _ = app.emit("clipboard-synced", ());
+    let _ = app.emit("history-updated", ());
+}
+
 /// 신호 → LWW 판정 → inline 적용 또는 fetch 요청.
 async fn apply_signal(
     app: &AppHandle,
@@ -562,13 +605,7 @@ async fn apply_signal(
         RemoteDecision::ApplyInline { id, kind, plaintext } => {
             core.cache_body(id, plaintext.clone());
             drop(core);
-            let content = ClipContent {
-                kind,
-                bytes: plaintext,
-            };
-            let _ = watcher.lock().await.write(&content);
-            let _ = app.emit("clipboard-synced", ());
-            let _ = app.emit("history-updated", ());
+            apply_to_clipboard(app, state, watcher, kind, plaintext).await;
         }
         RemoteDecision::NeedFetch { id, .. } => {
             let _ = handle.out.send(C2s::ContentRequest { id, epoch }).await;
@@ -589,13 +626,7 @@ async fn finish_fetch(
         Ok(applied) => {
             core.cache_body(applied.id, applied.plaintext.clone());
             drop(core);
-            let content = ClipContent {
-                kind: applied.kind,
-                bytes: applied.plaintext,
-            };
-            let _ = watcher.lock().await.write(&content);
-            let _ = app.emit("clipboard-synced", ());
-            let _ = app.emit("history-updated", ());
+            apply_to_clipboard(app, state, watcher, applied.kind, applied.plaintext).await;
         }
         Err(e) => tracing::warn!("fetch 적용 실패: {e}"),
     }

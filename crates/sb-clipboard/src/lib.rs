@@ -20,8 +20,13 @@ use sb_proto::ContentKind;
 #[cfg(feature = "arboard-backend")]
 pub mod arboard_backend;
 
+pub mod files;
+
 #[cfg(target_os = "macos")]
 pub mod macos;
+
+#[cfg(target_os = "windows")]
+pub mod windows;
 
 #[cfg(all(target_os = "linux", feature = "wayland-backend"))]
 pub mod linux;
@@ -63,6 +68,13 @@ impl ClipContent {
             bytes,
         }
     }
+    /// `bytes` 는 [`sb_proto::FileBundle`] 인코딩(파일명 포함).
+    pub fn files(bytes: Vec<u8>) -> Self {
+        Self {
+            kind: ContentKind::Files,
+            bytes,
+        }
+    }
     /// 변경 감지용 지문(정확한 비교 대신 빠른 해시).
     pub fn fingerprint(&self) -> u64 {
         let mut h = DefaultHasher::new();
@@ -86,6 +98,11 @@ pub trait ClipboardAccess {
     fn read(&self) -> Result<Option<ClipContent>, ClipError>;
     /// 클립보드에 쓰기.
     fn write(&self, content: &ClipContent) -> Result<(), ClipError>;
+    /// 클립보드에 **파일 경로 목록**을 올린다(붙여넣기 가능 상태). 파일은 호출자가 미리
+    /// 디스크에 만들어 둬야 한다. 미지원 플랫폼/백엔드는 `Unsupported`.
+    fn write_file_paths(&self, _paths: &[std::path::PathBuf]) -> Result<(), ClipError> {
+        Err(ClipError::Unsupported)
+    }
     /// concealed(비밀번호 매니저 힌트) 여부 — 감지 시 동기화 제외(§4.6). 미지원 백엔드는 false.
     fn is_concealed(&self) -> bool {
         false
@@ -98,6 +115,8 @@ pub trait ChangeWatcher {
     fn poll(&mut self) -> Result<Option<ClipContent>, ClipError>;
     /// OS 클립보드에 쓰기 + 지문/카운터 갱신(에코 재감지 억제).
     fn write(&mut self, content: &ClipContent) -> Result<(), ClipError>;
+    /// 파일 경로 목록을 클립보드에 올리고 에코 재감지를 억제한다.
+    fn write_file_paths(&mut self, paths: &[std::path::PathBuf]) -> Result<(), ClipError>;
     /// 다음 폴에서 이 콘텐츠를 "이미 본 것"으로 취급.
     fn note_written(&mut self, content: &ClipContent);
     /// 현재 클립보드가 concealed(비밀번호 매니저 힌트)인가.
@@ -144,6 +163,14 @@ impl<A: ClipboardAccess> ChangeWatcher for PollingWatcher<A> {
     fn write(&mut self, content: &ClipContent) -> Result<(), ClipError> {
         self.access.write(content)?;
         self.last = Some(content.fingerprint());
+        Ok(())
+    }
+
+    fn write_file_paths(&mut self, paths: &[std::path::PathBuf]) -> Result<(), ClipError> {
+        self.access.write_file_paths(paths)?;
+        // 우리가 만든 파일명이 원본과 다를 수 있으므로(중복 회피 접미사) 실제로 올라간 내용을
+        // 다시 읽어 지문을 맞춘다 — 그래야 다음 폴에서 새 클립으로 오인하지 않는다.
+        self.last = self.access.read().ok().flatten().map(|c| c.fingerprint());
         Ok(())
     }
 
@@ -252,6 +279,7 @@ mod engine_integration {
             enabled: true,
             sync_text: true,
             sync_images: true,
+            sync_files: true,
             max_content_bytes: 10 * 1024 * 1024,
             history_cap: 30,
         };

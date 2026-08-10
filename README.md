@@ -47,14 +47,18 @@ Design rationale and the full specification live in [`PLAN.md`](./PLAN.md) (v2.0
 
 - A clipboard shared by a small, explicitly approved group of devices on one LAN.
 - End-to-end encrypted: content, sort key and content kind are all sealed under a group key (GK).
-- Text and PNG images, up to a configurable size limit (10 MiB by default).
+- Text, PNG images, and **files copied in Finder/Explorer** — up to a configurable size limit
+  (10 MiB by default, adjustable to 100 MiB).
 - A tray-resident desktop app (Tauri 2 + Svelte 5) plus an optional headless relay binary.
 
 **It is not:**
 
 - Internet-reachable. Both the server bind address and the client dial address are checked against a
   **private-network allowlist**; a public IP is refused before a single byte is read.
-- A file-transfer tool, a cloud clipboard, or a multi-tenant service. One server = one workspace.
+- A general file-transfer tool. Files ride the *clipboard*: copy in Finder/Explorer, paste on
+  another member's machine. There is no folder support, no resumable transfer, and the size limit
+  applies. Files are also not supported on Linux yet (see [Project status](#project-status)).
+- A cloud clipboard or a multi-tenant service. One server = one workspace.
 - Production-signed software yet — see [Project status](#project-status).
 
 ---
@@ -93,6 +97,11 @@ Design rationale and the full specification live in [`PLAN.md`](./PLAN.md) (v2.0
    pulled on demand in 64 KiB chunks, so an idle 100-member workspace transfers almost nothing.
 5. **Last-writer-wins** resolution with echo suppression keeps the loop from ping-ponging: a device
    that just applied a remote clip does not re-broadcast it.
+6. **A file clip is just another content kind.** `ContentKind::Files` carries a CBOR bundle of
+   `{name, data}` entries as the content bytes, so it reuses the same seal → chunked relay → LWW →
+   history path as text. Because file clips exceed the 32 KiB inline threshold, they always take the
+   fetch path. This is protocol **3**; version 2 clients still connect and sync text/images, but they
+   cannot decode file clips, so update every device before relying on it.
 
 ---
 
@@ -124,7 +133,7 @@ Windows 11).
 git clone <repo> shareboard && cd shareboard
 
 # 1. Core crates — run the test suite first (fast, no GUI needed)
-cargo test --workspace                 # 100 tests
+cargo test --workspace                 # 112 tests
 
 # 2. Frontend dependencies
 pnpm install
@@ -294,6 +303,13 @@ require macOS Accessibility permission.
   **전체 삭제** clears everything.
 - **설정** (*Settings*) — see below.
 
+**Copying files:** select files in Finder/Explorer, press `Cmd/Ctrl+C`, then paste on another
+member's machine — they arrive as real files. Under the hood the file **names and contents are sealed
+inside the group-key ciphertext**, so the relay never learns either. Received files are written to
+`<data-dir>/received` and *that* copy is what lands on the clipboard, so pasting works in any app.
+Limits: no folders, at most 50 files per clip, and the total must fit `max_content_bytes`
+(10 MiB by default — raise it in settings for bigger files). macOS and Windows only for now.
+
 **How members are named:** each device seals a small profile `{name, platform, …}` under the group key
 and publishes it, so other members see a human name rather than a hash — while the *server* still sees
 only ciphertext. The name is your **OS username** by default, overridable in settings. The server also
@@ -331,6 +347,10 @@ Open the **설정** (*Settings*) tab and press **저장** (*Save*) to apply.
 | 기기 이름 (*Device name*) | `device_name_override` | empty | Display name shown to other members; empty = OS username |
 | 동기화 (*Sync*) | 텍스트 동기화 (`sync_text`) | on | Sync text clips |
 | | 이미지 동기화 (`sync_images`) | on | Sync PNG clips |
+| | 파일 동기화 (`sync_files`) | on | Sync files copied in Finder/Explorer (macOS·Windows only) |
+| | 한 번에 보낼 최대 크기 (`max_content_bytes`) | 10 MiB | Clips larger than this are kept in local history but not sent. Range 1–100 MiB |
+| 파일 (*Files*) | 받은 파일 폴더 | `<data-dir>/received` | Where received files land; **열기** opens it in the file manager |
+| | 받은 파일 표시 (`mark_received_files`) | on | Marks received files as coming from another machine (macOS quarantine / Windows `Zone.Identifier`) so Gatekeeper/SmartScreen still checks executables |
 | | 고위험 콘텐츠 확인 (`confirm_risky_content`) | on | *Declared, not yet enforced* |
 | 히스토리 / 개인정보 | 비밀번호 매니저 콘텐츠 제외 (`exclude_concealed`) | on | Skips clips flagged concealed (macOS hint implemented) |
 | | 인메모리 히스토리 최대 개수 (`memory_max_items`) | 30 | In-memory history cap |
@@ -509,16 +529,17 @@ not every limit has a call site yet — the last column says which are live toda
 
 | Path | Role |
 |---|---|
-| `crates/sb-proto` | Wire messages, E2E payloads, log entry types, LAN allowlist, protocol parameters |
+| `crates/sb-proto` | Wire messages, E2E payloads, file-clip bundle + filename sanitiser, log entry types, LAN allowlist, protocol parameters |
 | `crates/sb-crypto` | Identity (P-256 + X25519), group keys (XChaCha20-Poly1305), invites (Argon2id), key wrapping, log hash-chain verification |
 | `crates/sb-core` | Sync engine: LWW resolution, echo suppression, E2E seal/open, settings, in-memory history |
 | `crates/sb-net` | TLS 1.3 mTLS client, fingerprint pinning verifier, framing |
 | `crates/sb-server` | Blind relay: library + `sb-server` binary + runnable demos |
 | `crates/sb-store` | Encrypted history (rusqlite with field encryption), key store, key manager |
-| `crates/sb-clipboard` | `ClipboardAccess` trait, change watchers, mock + arboard backends, macOS native detection, Wayland scaffold |
-| `src-tauri` | Tauri 2 desktop app: tray, commands, background worker, embedded relay |
+| `crates/sb-clipboard` | `ClipboardAccess` trait, change watchers, mock + arboard backends, macOS native detection (changeCount, file URLs), Windows `CF_HDROP`, Wayland scaffold |
+| `src-tauri` | Tauri 2 desktop app: tray, commands, background worker, embedded relay, history popup, received-file materialisation |
 | `src` | Svelte 5 UI (`App.svelte`, `lib/ipc.ts`) |
 | `docs/SERVER.md` | Server setup guide (Korean) |
+| `docs/WINDOWS.md` | Windows packaging/install guide (Korean) |
 | `PLAN.md`, `PLAN-v1.1-p2p.md` | Full specification (v2.0) and the superseded P2P design |
 | `scripts/` | `gen-icons.sh` (icon pipeline), `linux-verify.sh` (Docker Linux verification) |
 
@@ -527,7 +548,7 @@ not every limit has a call site yet — the last column says which are live toda
 ## Development
 
 ```bash
-cargo test --workspace          # 100 tests
+cargo test --workspace          # 112 tests
 cargo fmt --all --check
 cargo clippy --workspace --all-targets
 cargo build -p sb-clipboard --features wayland-backend   # Linux only, off by default
@@ -547,9 +568,19 @@ docker run --rm -v "$PWD":/w -w /w ubuntu:24.04 bash scripts/linux-verify.sh
 ./scripts/gen-icons.sh
 ```
 
-**Test distribution:** `sb-crypto` 36 · `sb-core` 22 · `sb-proto` 16 · `sb-store` 14 · `sb-clipboard` 5 ·
-`sb-server` 4 · `sb-net` 3. The `sb-server` set includes an integration test where two clients complete
-a full E2E sync through a real relay, and `sb-net` stands up an actual TLS server on loopback.
+**Test distribution:** `sb-crypto` 36 · `sb-core` 23 · `sb-proto` 23 · `sb-store` 14 ·
+`sb-clipboard` 8 · `sb-server` 5 · `sb-net` 3. The `sb-server` set includes integration tests where
+two clients complete a full E2E sync through a real relay — one for text, one for **file clips** that
+also asserts the relay never sees a filename. `sb-net` stands up an actual TLS server on loopback.
+The desktop app crate adds 7 more (`cd src-tauri && cargo test -p shareboard`).
+
+**Clipboard probe** — check what a platform actually puts on the clipboard (useful when verifying
+file support on a new OS):
+
+```bash
+cargo run -p sb-clipboard --example clip_probe            # print current clipboard
+cargo run -p sb-clipboard --example clip_probe -- a.txt   # put a file on the clipboard
+```
 
 **Icons:** `assets/icons/app-icon.svg` is the master. `scripts/gen-icons.sh` renders it at 1024 px with
 resvg, feeds `cargo tauri icon` for the platform sets, and emits tray PNGs at 16/22/32/44 px as macOS
@@ -585,7 +616,8 @@ automatically.
 |---|---|
 | `settings.json` | All settings, including server address, pinned fingerprint and host flag |
 | `keys/*.key` | Identity (signing + KEM), current group key, history key, dedup key, workspace MAC key — 0600 files in a 0700 directory |
-| `history.db` | SQLite history store with field-level encryption (created at startup; unused while persistence is unwired) |
+| `history.db` | SQLite history store with field-level encryption (created at startup; unused — history is memory-only by design) |
+| `received/` | Files received from other members. This copy is what goes on the clipboard when a file clip is applied; delete freely |
 | `server/wslog.cbor` | Workspace log, only when this device hosts the embedded relay |
 
 **Standalone server** — `data_dir` from `server.toml` (default `./sb-server-data`):
@@ -612,6 +644,8 @@ Back this directory up. Losing `identity.bin` forces a new fingerprint on every 
 | `설정 실패: 이미 클레임됨` | That server already hosts a workspace — a server holds exactly one. Join it with an invite instead, or point `--init` at a fresh `data_dir` for a separate workspace. |
 | `그룹 키 대기 중` never clears | The member who invited you is offline. The key is delivered automatically the moment they reconnect; any other online member's invite works too. |
 | Hosting fails with a bind error | Port 45871 is already in use — often a second instance on the same machine. Only one instance per machine can host. |
+| Copying a file does nothing | Check 설정 → 동기화 → **파일 동기화** is on, that the total fits **한 번에 보낼 최대 크기**, and that it is not a folder (unsupported). On Linux file clips are ignored entirely. Run with `RUST_LOG=shareboard=debug` to see the reason. |
+| Received files are quarantined / SmartScreen warns | Intentional — 설정 → 파일 → **받은 파일 표시** marks them as coming from another machine. Turn it off if your fleet does not need it. |
 | Clipboard changes not picked up on Linux | Wayland native event watching is not implemented yet; the X11/XWayland `arboard` path polls every 400 ms. Under a strict Wayland-only compositor, detection may be unreliable. |
 | History shows items but 복사 is disabled | The body is no longer in the in-memory cache (it is bounded). Only cached items can be re-copied. |
 | Two local instances share clips oddly | They share one OS clipboard. Use the `two_client_sync` example for a clean demo. |
@@ -622,7 +656,7 @@ Set `RUST_LOG=debug` (or `sb_server=debug`) before launching for verbose tracing
 
 ## Project status
 
-All seven core crates are complete and tested (**100 tests**, green on macOS, Linux and Windows in
+All seven core crates are complete and tested (**112 tests**, green on macOS, Linux and Windows in
 CI). The desktop app wires them together and runs; the relay carries a real two-client E2E sync
 integration test, and the revocation path has a live four-member demo.
 
@@ -663,6 +697,10 @@ integration test, and the revocation path has a live four-member demo.
 - **Wayland native event watching** (`data-control` selection subscription) is still polling, and
   needs verification on real Linux hardware.
 - **Concealed-content detection is macOS-only**; Linux and Windows hints are not read yet.
+- **File clips are not supported on Linux.** macOS (`public.file-url`) and Windows (`CF_HDROP`) are
+  implemented; X11 `text/uri-list` is not, so file clips are simply ignored there. Folders,
+  resumable transfers and streaming-to-disk (files are held in memory, hence the size cap) are also
+  outstanding. The Windows path compiles in CI but has **not been verified on a real machine yet**.
 - **UI is Korean-only** — no i18n layer yet.
 - **No signed packages.** Windows installers and executables are now built automatically by CI, but
   they are **unsigned** (SmartScreen warns on first run); macOS/Linux bundles are neither built by CI

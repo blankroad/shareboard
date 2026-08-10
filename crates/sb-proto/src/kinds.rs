@@ -4,11 +4,16 @@ use serde::{Deserialize, Serialize};
 
 use crate::ids::DeviceId;
 
-/// 동기화 대상 콘텐츠 종류. v1은 텍스트/PNG만 (§1 비목표: 파일 전송 제외).
+/// 동기화 대상 콘텐츠 종류.
+///
+/// `Files` 는 OS 클립보드의 파일 목록(Finder/탐색기 복사)이며, 콘텐츠 바이트는
+/// [`crate::files::FileBundle`] 인코딩이다 — 파일 **이름까지 GK 암호문 안**에 들어가므로
+/// 서버는 이름도 개수도 보지 못한다. proto 3 에서 추가됐다(구 버전 클라는 복호 실패 → 무시).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ContentKind {
     Text,
     ImagePng,
+    Files,
 }
 
 /// 장치 플랫폼 (enc_profile 표시용).

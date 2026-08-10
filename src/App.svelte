@@ -40,6 +40,9 @@
   let hotkeyErr = $state<string | null>(null);
   /// OS 실제 등록 상태(설정값과 어긋날 수 있어 따로 읽는다).
   let autostart = $state(false);
+  /// 파일 클립보드 지원 여부(Linux 는 아직 미지원) + 받은 파일 폴더.
+  let filesOk = $state(true);
+  let receivedDir = $state("");
 
   const configured = $derived(!!status?.server_addr);
 
@@ -62,6 +65,8 @@
     hotkeyDraft = settings.app.quick_hotkey ?? "";
     try {
       autostart = await api.getAutostart();
+      filesOk = await api.filesSupported();
+      receivedDir = await api.getReceivedDir();
     } catch {}
     await refresh();
     on("status-changed", () => api.getStatus().then((s) => (status = s)));
@@ -389,6 +394,9 @@
                   <span class="thumb thumb-empty" aria-hidden="true">🖼</span>
                   <span class="preview">이미지 · {fmtSize(h.size)}{h.has_body ? "" : " · 본문 없음"}</span>
                 {/if}
+              {:else if h.kind === "files"}
+                <span class="thumb thumb-empty" aria-hidden="true">📄</span>
+                <span class="preview">{h.preview} · {fmtSize(h.size)}</span>
               {:else}
                 <span class="preview">{h.preview}</span>
               {/if}
@@ -428,7 +436,28 @@
         <h3>동기화</h3>
         <label class="toggle"><input type="checkbox" bind:checked={settings.sync.sync_text} style="width:auto" /> 텍스트 동기화</label>
         <label class="toggle"><input type="checkbox" bind:checked={settings.sync.sync_images} style="width:auto" /> 이미지 동기화</label>
+        <label class="toggle"><input type="checkbox" bind:checked={settings.sync.sync_files} style="width:auto" /> 파일 동기화 (Finder/탐색기에서 복사한 파일)</label>
         <label class="toggle"><input type="checkbox" bind:checked={settings.sync.confirm_risky_content} style="width:auto" /> 고위험 콘텐츠 확인 후 적용</label>
+        <label>한 번에 보낼 최대 크기 (MB) — 이보다 크면 동기화하지 않습니다</label>
+        <input type="number" min="1" max="100" value={Math.round(settings.sync.max_content_bytes / 1048576)}
+               oninput={(e) => (settings.sync.max_content_bytes = Math.max(1, Math.min(100, Number(e.currentTarget.value))) * 1048576)} />
+      </div>
+      <div class="card">
+        <h3>파일</h3>
+        {#if filesOk}
+          <p class="pill">파일을 복사하면 다른 기기에도 <b>파일로</b> 붙여넣어집니다. 받은 파일은 아래 폴더에 저장되고, 그 파일이 클립보드에 올라갑니다.</p>
+        {:else}
+          <div class="warn-banner">이 플랫폼(Linux)은 아직 파일 클립보드를 지원하지 않습니다 — 텍스트·이미지만 동기화됩니다.</div>
+        {/if}
+        <div class="row">
+          <div class="grow">받은 파일 폴더</div>
+          <span class="mono" style="max-width:320px;overflow:hidden;text-overflow:ellipsis">{receivedDir}</span>
+          <button class="btn" onclick={() => api.openReceivedDir()}>열기</button>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" bind:checked={settings.privacy.mark_received_files} style="width:auto" />
+          받은 파일에 "다른 기기에서 왔음" 표시 (macOS quarantine / Windows Zone.Identifier)
+        </label>
       </div>
       <div class="card">
         <h3>히스토리 / 개인정보</h3>

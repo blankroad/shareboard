@@ -55,6 +55,14 @@ fn png_to_rgba(png: &[u8]) -> Result<ImageData<'static>, ClipError> {
 
 impl ClipboardAccess for ArboardAccess {
     fn read(&self) -> Result<Option<ClipContent>, ClipError> {
+        // 파일 먼저 판정한다 — 파일을 복사하면 파일명이 텍스트로도 올라오는 플랫폼이 있어,
+        // 텍스트를 먼저 보면 "파일명 문자열"을 동기화해 버린다.
+        let paths = crate::files::clipboard_file_paths();
+        if !paths.is_empty() {
+            // 상한 초과·폴더 등으로 담을 게 없으면 이 클립은 건너뛴다(텍스트로 대체하지 않는다).
+            return Ok(crate::files::bundle_from_paths(&paths));
+        }
+
         let mut cb = Clipboard::new().map_err(err)?;
         // 텍스트 우선(§5.5 다중 포맷 우선순위: 텍스트 > 이미지).
         if let Ok(t) = cb.get_text() {
@@ -69,16 +77,24 @@ impl ClipboardAccess for ArboardAccess {
     }
 
     fn write(&self, content: &ClipContent) -> Result<(), ClipError> {
-        let mut cb = Clipboard::new().map_err(err)?;
         match content.kind {
             sb_proto::ContentKind::Text => {
+                let mut cb = Clipboard::new().map_err(err)?;
                 let s = String::from_utf8_lossy(&content.bytes).into_owned();
                 cb.set_text(s).map_err(err)
             }
             sb_proto::ContentKind::ImagePng => {
+                let mut cb = Clipboard::new().map_err(err)?;
                 let data = png_to_rgba(&content.bytes)?;
                 cb.set_image(data).map_err(err)
             }
+            // 파일은 디스크에 실체가 있어야 붙여넣기가 성립한다 → 앱이 파일을 만든 뒤
+            // write_file_paths 로 경로를 올린다(§파일 클립보드).
+            sb_proto::ContentKind::Files => Err(ClipError::Unsupported),
         }
+    }
+
+    fn write_file_paths(&self, paths: &[std::path::PathBuf]) -> Result<(), ClipError> {
+        crate::files::set_clipboard_file_paths(paths)
     }
 }
