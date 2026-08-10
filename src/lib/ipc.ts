@@ -114,3 +114,9 @@ export async function on(event: string, cb: () => void): Promise<UnlistenFn> {
   const { listen } = await import("@tauri-apps/api/event");
   return listen(event, () => cb());
 }
+
+/// payload 가 있는 이벤트 구독(예: clip-skipped 의 이유 문자열).
+export async function onPayload<T>(event: string, cb: (payload: T) => void): Promise<UnlistenFn> {
+  const { listen } = await import("@tauri-apps/api/event");
+  return listen<T>(event, (e) => cb(e.payload));
+}

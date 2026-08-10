@@ -351,6 +351,16 @@ async fn session(app: &AppHandle, state: &AppState, watcher: &SharedWatcher, mut
     }
 }
 
+/// 클립을 건너뛴 이유를 사용자에게 알린다 — 조용히 사라지면 "복사했는데 아무 일도 없다"가 된다.
+fn notify_skip(app: &AppHandle, why: String) {
+    tracing::warn!("클립 건너뜀: {why}");
+    let _ = app.emit("clip-skipped", why);
+}
+
+fn mb(n: u64) -> String {
+    format!("{:.1} MB", n as f64 / 1_048_576.0)
+}
+
 /// 로컬 클립보드 변경 → 신호 발행.
 async fn poll_clipboard(app: &AppHandle, state: &AppState, watcher: &SharedWatcher) {
     // 워처 락은 여기서 놓는다 — 코어 락과 겹치지 않게(교착 방지).
@@ -361,7 +371,13 @@ async fn poll_clipboard(app: &AppHandle, state: &AppState, watcher: &SharedWatch
                 let concealed = w.is_concealed();
                 (c, concealed)
             }
-            _ => return,
+            Ok(None) => return,
+            // 크기 상한·폴더 등 정책상 건너뜀 → 이유를 UI 로 올린다.
+            Err(sb_clipboard::ClipError::Skipped(why)) => return notify_skip(app, why),
+            Err(e) => {
+                tracing::debug!("클립보드 읽기 실패: {e}");
+                return;
+            }
         }
     };
     if content.bytes.len() as u64 > READ_HARD_LIMIT {
@@ -376,9 +392,10 @@ async fn poll_clipboard(app: &AppHandle, state: &AppState, watcher: &SharedWatch
         .engine
         .on_local_clipboard(content.kind, &content.bytes, now_ms());
     tracing::debug!(
-        "로컬 클립 감지: {:?} {}B → {}",
+        "로컬 클립 감지: {:?} {}B (본문 캐시 {}) → {}",
         content.kind,
         content.bytes.len(),
+        mb(core.body_cache_bytes()),
         match &outcome {
             Ok(LocalOutcome::Echo) => "에코(무시)",
             Ok(LocalOutcome::Emit(_)) if core.out.is_some() => "히스토리 + 발행",
@@ -405,6 +422,28 @@ async fn poll_clipboard(app: &AppHandle, state: &AppState, watcher: &SharedWatch
         // 동기화 off·kind off·상한 초과, 그리고 봉인 실패까지 — 엔진은 이미 로컬 히스토리에
         // 넣었다. 본문 캐시와 UI 갱신을 빠뜨리면 항목이 "복사 불가"로 남고 목록도 늦게 뜬다.
         _ => {
+            // 왜 안 보내는지 알려준다(특히 파일: 상한을 올리면 되는 경우가 많다).
+            let limit = core.settings.sync.max_content_bytes;
+            match &outcome {
+                Ok(LocalOutcome::TooLarge) => notify_skip(
+                    app,
+                    format!(
+                        "{} — {}(상한 {})를 넘어 다른 기기로 보내지 않았습니다. 설정 → 동기화에서 최대 크기를 올리세요",
+                        if content.kind == ContentKind::Files { "파일" } else { "콘텐츠" },
+                        mb(content.bytes.len() as u64),
+                        mb(limit)
+                    ),
+                ),
+                Ok(LocalOutcome::KindDisabled) => notify_skip(
+                    app,
+                    match content.kind {
+                        ContentKind::Files => "파일 동기화가 꺼져 있습니다 (설정 → 동기화)".into(),
+                        ContentKind::ImagePng => "이미지 동기화가 꺼져 있습니다 (설정 → 동기화)".into(),
+                        ContentKind::Text => "텍스트 동기화가 꺼져 있습니다 (설정 → 동기화)".to_string(),
+                    },
+                ),
+                _ => {}
+            }
             let newest = core.engine.history().list().next().map(|i| i.id);
             if let Some(id) = newest {
                 core.cache_body(id, content.bytes.clone());

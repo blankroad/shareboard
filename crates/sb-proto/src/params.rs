@@ -17,8 +17,10 @@ pub const GUEST_MAX_FRAME: usize = 32 * 1024;
 pub const INLINE_THRESHOLD: usize = 32 * 1024;
 /// 암호문 청크 크기.
 pub const CHUNK_SIZE: usize = 64 * 1024;
-/// 전파 상한 기본값(설정 1–100MiB).
-pub const MAX_CONTENT_SIZE_DEFAULT: u64 = 10 * 1024 * 1024;
+/// 전파 상한 기본값. 파일 클립(proto 3)이 들어오면서 10MiB 로는 흔한 PDF·이미지도 못 보내
+/// 므로 READ_HARD_LIMIT 과 같은 32MiB 로 맞췄다 — 읽기 상한이 곧 실효 상한이라 설정에서
+/// 이보다 올려도 의미가 없다. 본문 캐시는 바이트 상한(4×)으로 묶여 있어 메모리는 안전하다.
+pub const MAX_CONTENT_SIZE_DEFAULT: u64 = 32 * 1024 * 1024;
 pub const MAX_CONTENT_SIZE_MIN: u64 = 1 * 1024 * 1024;
 pub const MAX_CONTENT_SIZE_MAX: u64 = 100 * 1024 * 1024;
 /// 한 클립에 담을 파일 개수 상한 — 초과 시 파일 클립 자체를 건너뛴다.

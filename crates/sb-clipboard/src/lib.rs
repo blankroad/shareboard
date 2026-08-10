@@ -90,6 +90,10 @@ pub enum ClipError {
     Access(String),
     #[error("지원하지 않는 포맷")]
     Unsupported,
+    /// 정책상 이 클립을 건너뛴다(크기 상한·폴더 등). 메시지는 **사용자에게 그대로 보여준다** —
+    /// 조용히 사라지면 "복사했는데 아무 일도 안 일어난다"가 된다.
+    #[error("{0}")]
+    Skipped(String),
 }
 
 /// OS 클립보드 접근.

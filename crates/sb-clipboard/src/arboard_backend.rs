@@ -59,8 +59,9 @@ impl ClipboardAccess for ArboardAccess {
         // 텍스트를 먼저 보면 "파일명 문자열"을 동기화해 버린다.
         let paths = crate::files::clipboard_file_paths();
         if !paths.is_empty() {
-            // 상한 초과·폴더 등으로 담을 게 없으면 이 클립은 건너뛴다(텍스트로 대체하지 않는다).
-            return Ok(crate::files::bundle_from_paths(&paths));
+            // 상한 초과·폴더 등은 Skipped 로 올려 사용자에게 이유를 보여준다.
+            // (텍스트로 대체하지 않는다 — 파일명 문자열이 동기화되면 더 헷갈린다.)
+            return crate::files::bundle_from_paths(&paths).map(Some);
         }
 
         let mut cb = Clipboard::new().map_err(err)?;

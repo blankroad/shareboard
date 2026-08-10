@@ -4,6 +4,7 @@
     api,
     on,
     loadThumbs,
+    onPayload,
     thumbKey,
     type Status,
     type Member,
@@ -43,6 +44,8 @@
   /// 파일 클립보드 지원 여부(Linux 는 아직 미지원) + 받은 파일 폴더.
   let filesOk = $state(true);
   let receivedDir = $state("");
+  /// 마지막으로 건너뛴 클립의 이유(크기 상한 등) — 조용히 실패하지 않도록 배너로 보여준다.
+  let skipNotice = $state<string | null>(null);
 
   const configured = $derived(!!status?.server_addr);
 
@@ -72,6 +75,9 @@
     on("status-changed", () => api.getStatus().then((s) => (status = s)));
     on("members-changed", () => api.getMembers().then((m) => (members = m)));
     on("history-updated", () => api.getHistory().then(setHistory));
+    onPayload<string>("clip-skipped", (why) => {
+      skipNotice = why;
+    });
   });
 
   async function doHost() {
@@ -277,6 +283,12 @@
     </div>
   </main>
 {:else}
+  {#if skipNotice}
+    <div class="warn-banner" style="margin:12px 18px 0">
+      ⚠️ {skipNotice}
+      <button class="btn" style="font-size:11px;padding:2px 8px;margin-left:8px" onclick={() => (skipNotice = null)}>닫기</button>
+    </div>
+  {/if}
   <nav>
     <button class:active={tab === "overview"} onclick={() => (tab = "overview")}>개요</button>
     <button class:active={tab === "members"} onclick={() => (tab = "members")}>멤버 {members.length ? `(${members.length})` : ""}</button>
@@ -438,9 +450,9 @@
         <label class="toggle"><input type="checkbox" bind:checked={settings.sync.sync_images} style="width:auto" /> 이미지 동기화</label>
         <label class="toggle"><input type="checkbox" bind:checked={settings.sync.sync_files} style="width:auto" /> 파일 동기화 (Finder/탐색기에서 복사한 파일)</label>
         <label class="toggle"><input type="checkbox" bind:checked={settings.sync.confirm_risky_content} style="width:auto" /> 고위험 콘텐츠 확인 후 적용</label>
-        <label>한 번에 보낼 최대 크기 (MB) — 이보다 크면 동기화하지 않습니다</label>
-        <input type="number" min="1" max="100" value={Math.round(settings.sync.max_content_bytes / 1048576)}
-               oninput={(e) => (settings.sync.max_content_bytes = Math.max(1, Math.min(100, Number(e.currentTarget.value))) * 1048576)} />
+        <label>한 번에 보낼 최대 크기 (MB) — 이보다 크면 히스토리에만 남고 보내지 않습니다 (최대 32)</label>
+        <input type="number" min="1" max="32" value={Math.round(settings.sync.max_content_bytes / 1048576)}
+               oninput={(e) => (settings.sync.max_content_bytes = Math.max(1, Math.min(32, Number(e.currentTarget.value))) * 1048576)} />
       </div>
       <div class="card">
         <h3>파일</h3>

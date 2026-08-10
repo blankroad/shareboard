@@ -14,6 +14,10 @@ use serde::{Deserialize, Serialize};
 pub struct FileEntry {
     /// 원본 파일명(경로 없음). 신뢰하지 말 것 — 쓸 때 `safe_file_name` 통과 필수.
     pub name: String,
+    /// **반드시 CBOR byte string 으로** 인코딩한다(`serde_bytes`). 기본 serde 는 `Vec<u8>` 을
+    /// 정수 배열로 써서 0x18 이상 바이트마다 2바이트를 먹는다 → 파일이 2배로 부풀고 상한을
+    /// 절반으로 깎아먹는다.
+    #[serde(with = "serde_bytes")]
     pub data: Vec<u8>,
 }
 
@@ -182,6 +186,23 @@ mod tests {
         ]);
         assert_eq!(b.total_bytes(), 4);
         assert_eq!(b.preview(), "a.txt, b.png (2개)");
+    }
+
+    /// 파일 바이트는 CBOR byte string 이어야 한다 — 정수 배열이면 크기가 2배가 된다.
+    #[test]
+    fn bundle_encoding_has_no_size_blowup() {
+        let raw = vec![0xABu8; 100_000];
+        let b = FileBundle::new(vec![FileEntry {
+            name: "big.bin".into(),
+            data: raw.clone(),
+        }]);
+        let enc = crate::encode(&b).unwrap();
+        assert!(
+            enc.len() < raw.len() + 256,
+            "인코딩 오버헤드가 과도함: {} vs {}",
+            enc.len(),
+            raw.len()
+        );
     }
 
     #[test]

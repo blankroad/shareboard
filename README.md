@@ -48,7 +48,7 @@ Design rationale and the full specification live in [`PLAN.md`](./PLAN.md) (v2.0
 - A clipboard shared by a small, explicitly approved group of devices on one LAN.
 - End-to-end encrypted: content, sort key and content kind are all sealed under a group key (GK).
 - Text, PNG images, and **files copied in Finder/Explorer** — up to a configurable size limit
-  (10 MiB by default, adjustable to 100 MiB).
+  (32 MiB by default, which is also the hard ceiling).
 - A tray-resident desktop app (Tauri 2 + Svelte 5) plus an optional headless relay binary.
 
 **It is not:**
@@ -348,7 +348,7 @@ Open the **설정** (*Settings*) tab and press **저장** (*Save*) to apply.
 | 동기화 (*Sync*) | 텍스트 동기화 (`sync_text`) | on | Sync text clips |
 | | 이미지 동기화 (`sync_images`) | on | Sync PNG clips |
 | | 파일 동기화 (`sync_files`) | on | Sync files copied in Finder/Explorer (macOS·Windows only) |
-| | 한 번에 보낼 최대 크기 (`max_content_bytes`) | 10 MiB | Clips larger than this are kept in local history but not sent. Range 1–100 MiB |
+| | 한 번에 보낼 최대 크기 (`max_content_bytes`) | 32 MiB | Clips larger than this stay in local history but are not sent, and the app says so. 32 MiB is also the hard read ceiling (`READ_HARD_LIMIT`), so raising it beyond that has no effect |
 | 파일 (*Files*) | 받은 파일 폴더 | `<data-dir>/received` | Where received files land; **열기** opens it in the file manager |
 | | 받은 파일 표시 (`mark_received_files`) | on | Marks received files as coming from another machine (macOS quarantine / Windows `Zone.Identifier`) so Gatekeeper/SmartScreen still checks executables |
 | | 고위험 콘텐츠 확인 (`confirm_risky_content`) | on | *Declared, not yet enforced* |

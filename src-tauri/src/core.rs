@@ -28,8 +28,13 @@ pub struct Core {
     pub settings: Settings,
     pub engine: SyncEngine,
     pub history: HistoryStore,
-    /// 재복사를 위한 본문 캐시(메모리). 디스크 영속은 settings.history.persist_enabled 시 sb-store.
+    /// 재복사를 위한 본문 캐시(메모리 전용 — 히스토리는 디스크에 남기지 않는다).
+    /// **바이트 상한**을 지킨다 — 파일 클립이 들어오면서 개수 상한만으로는 메모리가 GB 단위로
+    /// 부풀 수 있다(30개 × 32MB). `cache_body`/`forget_body`/`clear_bodies` 로만 만진다.
     pub body_cache: HashMap<ContentId, Vec<u8>>,
+    /// 축출 순서(FIFO) + 현재 캐시 바이트 합. 초기화 외에는 위 메서드로만 만진다.
+    pub(crate) body_order: std::collections::VecDeque<ContentId>,
+    pub(crate) body_bytes: u64,
     /// 이미지 항목 썸네일(data URL) 캐시. 본문에서 파생되므로 삭제 시 함께 정리한다.
     pub thumb_cache: HashMap<ContentId, ThumbView>,
     pub members: Vec<MemberView>,
@@ -64,12 +69,51 @@ impl Core {
 
     /// 본문 캐시에 추가(상한 유지).
     pub fn cache_body(&mut self, id: ContentId, bytes: Vec<u8>) {
-        let cap = self.settings.history.memory_max_items.max(1);
-        if self.body_cache.len() >= cap * 2 {
-            // 단순 정리: 절반 비우기(정확한 LRU 대신).
-            self.body_cache.clear();
-        }
+        // 바이트 상한 = 4 × 최대 콘텐츠 크기(§5.6 CONTENT_CACHE_BYTES 취지) — 최근 몇 건은
+        // 재복사 가능하게 두되, 큰 파일이 쌓여 메모리를 삼키지는 않게 한다.
+        let cap_bytes = self.settings.sync.max_content_bytes.saturating_mul(4).max(1);
+        let cap_items = self.settings.history.memory_max_items.max(1) * 2;
+
+        self.forget_body(&id); // 같은 id 재삽입 시 이중 계산 방지
+        self.body_bytes = self.body_bytes.saturating_add(bytes.len() as u64);
         self.body_cache.insert(id, bytes);
+        self.body_order.push_back(id);
+
+        while self.body_bytes > cap_bytes || self.body_order.len() > cap_items {
+            let Some(old) = self.body_order.pop_front() else {
+                break;
+            };
+            if let Some(dropped) = self.body_cache.remove(&old) {
+                self.body_bytes = self.body_bytes.saturating_sub(dropped.len() as u64);
+                self.thumb_cache.remove(&old);
+            }
+            // 방금 넣은 것만 남았는데도 상한을 넘으면(한 건이 상한보다 큼) 더 버릴 게 없다.
+            if self.body_order.is_empty() {
+                break;
+            }
+        }
+    }
+
+    /// 본문 하나를 캐시에서 지운다(바이트 합 동기화 포함).
+    pub fn forget_body(&mut self, id: &ContentId) {
+        if let Some(b) = self.body_cache.remove(id) {
+            self.body_bytes = self.body_bytes.saturating_sub(b.len() as u64);
+            self.body_order.retain(|x| x != id);
+        }
+        self.thumb_cache.remove(id);
+    }
+
+    /// 본문·썸네일 캐시 전체 비우기.
+    pub fn clear_bodies(&mut self) {
+        self.body_cache.clear();
+        self.body_order.clear();
+        self.body_bytes = 0;
+        self.thumb_cache.clear();
+    }
+
+    /// 현재 본문 캐시가 쓰는 바이트(진단용).
+    pub fn body_cache_bytes(&self) -> u64 {
+        self.body_bytes
     }
 
     /// 썸네일 캐시 상한 유지 — 히스토리에서 사라진 항목의 썸네일을 버린다.

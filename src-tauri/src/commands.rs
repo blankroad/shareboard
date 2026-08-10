@@ -253,7 +253,7 @@ pub async fn set_sync_enabled(
 #[tauri::command]
 pub async fn get_history(state: State<'_, AppState>) -> Result<Vec<HistoryItemView>, String> {
     let core = state.lock().await;
-    let out = core
+    let out: Vec<HistoryItemView> = core
         .engine
         .history()
         .list()
@@ -275,6 +275,7 @@ pub async fn get_history(state: State<'_, AppState>) -> Result<Vec<HistoryItemVi
             has_body: core.body_cache.contains_key(&it.id),
         })
         .collect();
+    tracing::debug!("get_history → {}건", out.len());
     Ok(out)
 }
 
@@ -343,6 +344,12 @@ pub async fn copy_history_item(state: State<'_, AppState>, id: String) -> Result
     Ok(true)
 }
 
+/// 프런트엔드 런타임 오류를 앱 로그로 올린다 — WebView 콘솔을 볼 수 없는 배포 환경 대비.
+#[tauri::command]
+pub fn log_ui_error(message: String) {
+    tracing::error!("UI 오류: {message}");
+}
+
 /// 받은 파일 폴더 경로(UI 표시용).
 #[tauri::command]
 pub async fn get_received_dir(state: State<'_, AppState>) -> Result<String, String> {
@@ -376,8 +383,7 @@ pub async fn delete_history_item(
     let id = hex32(&id).ok_or("잘못된 id")?;
     let mut core = state.lock().await;
     core.engine.history_mut().delete(&id);
-    core.body_cache.remove(&id);
-    core.thumb_cache.remove(&id);
+    core.forget_body(&id);
     let _ = core.history.delete(&id);
     let _ = app.emit("history-updated", ());
     Ok(())
@@ -396,8 +402,7 @@ pub async fn set_pinned(state: State<'_, AppState>, id: String, pinned: bool) ->
 pub async fn clear_history(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     let mut core = state.lock().await;
     core.engine.history_mut().clear();
-    core.body_cache.clear();
-    core.thumb_cache.clear();
+    core.clear_bodies();
     let _ = core.history.clear();
     let _ = app.emit("history-updated", ());
     Ok(())

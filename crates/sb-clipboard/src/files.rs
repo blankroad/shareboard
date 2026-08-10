@@ -56,45 +56,54 @@ pub const fn files_supported() -> bool {
     cfg!(any(target_os = "macos", target_os = "windows"))
 }
 
-/// 경로 목록 → `Files` 클립 콘텐츠. 담을 게 없거나 상한을 넘으면 `None`(그 클립은 건너뛴다).
+fn mib(n: u64) -> String {
+    format!("{:.1} MB", n as f64 / 1_048_576.0)
+}
+
+/// 경로 목록 → `Files` 클립 콘텐츠.
 ///
-/// 건너뛰는 경우: 파일 0개 · 개수 상한 초과 · 총 크기가 READ_HARD_LIMIT 초과 · 디렉터리만 있음.
-pub fn bundle_from_paths(paths: &[PathBuf]) -> Option<ClipContent> {
+/// 건너뛸 때는 `ClipError::Skipped(사용자에게 보여줄 이유)` 를 돌려준다 — 파일 0개 ·
+/// 개수 상한 초과 · 총 크기가 READ_HARD_LIMIT 초과 · 폴더뿐.
+pub fn bundle_from_paths(paths: &[PathBuf]) -> Result<ClipContent, ClipError> {
     if paths.is_empty() {
-        return None;
+        return Err(ClipError::Skipped("복사된 파일이 없습니다".into()));
     }
     if paths.len() > MAX_FILES_PER_CLIP {
-        tracing::warn!(
-            "파일 {}개는 상한({MAX_FILES_PER_CLIP})을 넘어 건너뜁니다",
+        return Err(ClipError::Skipped(format!(
+            "파일 {}개는 한 번에 보낼 수 있는 개수({MAX_FILES_PER_CLIP}개)를 넘습니다",
             paths.len()
-        );
-        return None;
+        )));
     }
 
     // 1) 먼저 stat 만으로 크기·종류 판정 — 큰 파일을 읽지 않는다.
     let mut targets: Vec<&Path> = Vec::new();
     let mut total: u64 = 0;
+    let mut had_dir = false;
     for p in paths {
         let Ok(md) = std::fs::metadata(p) else {
             tracing::warn!("파일 정보를 읽을 수 없어 건너뜁니다: {}", p.display());
             continue;
         };
         if md.is_dir() {
-            tracing::warn!("폴더는 아직 지원하지 않습니다: {}", p.display());
+            had_dir = true;
             continue;
         }
         total = total.saturating_add(md.len());
         if total > READ_HARD_LIMIT {
-            tracing::warn!(
-                "파일 총 크기가 상한({READ_HARD_LIMIT} bytes)을 넘어 건너뜁니다: {}",
-                p.display()
-            );
-            return None;
+            return Err(ClipError::Skipped(format!(
+                "파일이 너무 큽니다 — {} (읽기 상한 {}). 파일 공유는 이 크기까지만 됩니다",
+                mib(total),
+                mib(READ_HARD_LIMIT)
+            )));
         }
         targets.push(p.as_path());
     }
     if targets.is_empty() {
-        return None;
+        return Err(ClipError::Skipped(if had_dir {
+            "폴더는 아직 지원하지 않습니다 — 파일을 골라 복사해 주세요".into()
+        } else {
+            "복사된 파일을 읽을 수 없습니다".into()
+        }));
     }
 
     // 2) 상한 안이므로 실제로 읽는다.
@@ -110,17 +119,13 @@ pub fn bundle_from_paths(paths: &[PathBuf]) -> Option<ClipContent> {
         }
     }
     if files.is_empty() {
-        return None;
+        return Err(ClipError::Skipped("복사된 파일을 읽을 수 없습니다".into()));
     }
 
     let bundle = FileBundle::new(files);
-    match sb_proto::encode(&bundle) {
-        Ok(bytes) => Some(ClipContent::files(bytes)),
-        Err(e) => {
-            tracing::warn!("파일 번들 인코딩 실패: {e}");
-            None
-        }
-    }
+    sb_proto::encode(&bundle)
+        .map(ClipContent::files)
+        .map_err(|e| ClipError::Access(format!("파일 번들 인코딩 실패: {e}")))
 }
 
 /// `Files` 콘텐츠 바이트 → 번들.
@@ -132,10 +137,18 @@ pub fn bundle_from_bytes(bytes: &[u8]) -> Result<FileBundle, ClipError> {
 mod tests {
     use super::*;
 
+    fn skip_reason(r: Result<ClipContent, ClipError>) -> String {
+        match r {
+            Err(ClipError::Skipped(m)) => m,
+            other => panic!("Skipped 기대: {other:?}"),
+        }
+    }
+
     #[test]
-    fn empty_and_missing_paths_yield_none() {
-        assert!(bundle_from_paths(&[]).is_none());
-        assert!(bundle_from_paths(&[PathBuf::from("/definitely/not/here-xyz")]).is_none());
+    fn empty_and_unreadable_paths_report_a_reason() {
+        assert!(skip_reason(bundle_from_paths(&[])).contains("없습니다"));
+        let missing = bundle_from_paths(&[PathBuf::from("/definitely/not/here-xyz")]);
+        assert!(!skip_reason(missing).is_empty());
     }
 
     #[test]
@@ -161,10 +174,25 @@ mod tests {
     }
 
     #[test]
-    fn directories_are_skipped() {
+    fn directories_are_skipped_with_a_reason() {
         let dir = std::env::temp_dir().join(format!("sb-files-dir-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        assert!(bundle_from_paths(std::slice::from_ref(&dir)).is_none(), "폴더만이면 None");
+        let why = skip_reason(bundle_from_paths(std::slice::from_ref(&dir)));
+        assert!(why.contains("폴더"), "{why}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn oversized_files_are_not_even_read() {
+        let dir = std::env::temp_dir().join(format!("sb-files-big-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let big = dir.join("big.bin");
+        // sparse 파일로 상한 초과 크기만 만든다(실제 디스크는 거의 쓰지 않음).
+        let f = std::fs::File::create(&big).unwrap();
+        f.set_len(READ_HARD_LIMIT + 1).unwrap();
+        drop(f);
+        let why = skip_reason(bundle_from_paths(std::slice::from_ref(&big)));
+        assert!(why.contains("너무 큽니다"), "{why}");
         std::fs::remove_dir_all(&dir).ok();
     }
 }
