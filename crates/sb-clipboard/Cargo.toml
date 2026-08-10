@@ -26,6 +26,10 @@ objc2 = "0.6"
 objc2-app-kit = { version = "0.3", features = ["NSPasteboard"] }
 objc2-foundation = { version = "0.3", features = ["NSString", "NSArray"] }
 
+# Windows 파일 클립보드(CF_HDROP). arboard 가 이미 쓰는 크레이트라 새 의존성 트리는 없다.
+[target.'cfg(target_os = "windows")'.dependencies]
+clipboard-win = "5"
+
 # Wayland 네이티브 백엔드 (Linux 전용·옵션). data-control 이벤트 감시는 후속(현재 폴링).
 [target.'cfg(target_os = "linux")'.dependencies]
 wl-clipboard-rs = { version = "0.9", optional = true }

@@ -1733,6 +1733,7 @@ name = "sb-clipboard"
 version = "0.1.0"
 dependencies = [
  "arboard",
+ "clipboard-win",
  "image",
  "objc2",
  "objc2-app-kit",

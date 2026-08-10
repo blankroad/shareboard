@@ -82,6 +82,8 @@ impl ClipboardAccess for WaylandAccess {
         let mime = match content.kind {
             ContentKind::Text => CopyMime::Specific(TEXT_MIME.to_string()),
             ContentKind::ImagePng => CopyMime::Specific(IMAGE_MIME.to_string()),
+            // 파일 클립은 Linux 미지원(§파일 클립보드) — text/uri-list 는 후속 과제.
+            ContentKind::Files => return Err(ClipError::Unsupported),
         };
         Options::new()
             .copy(Source::Bytes(content.bytes.clone().into()), mime)

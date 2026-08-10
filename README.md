@@ -580,6 +580,16 @@ two clients complete a full E2E sync through a real relay — one for text, one 
 also asserts the relay never sees a filename. `sb-net` stands up an actual TLS server on loopback.
 The desktop app crate adds 7 more (`cd src-tauri && cargo test -p shareboard`).
 
+**Cross-platform pre-flight** — the platform-gated clipboard code is easy to break from macOS (a
+dependency declared for only one target compiles fine locally and fails CI). These two checks need no
+Windows/Linux machine, only `rustup target add`:
+
+```bash
+cargo check -p sb-clipboard --target x86_64-pc-windows-msvc                    # CF_HDROP path
+cargo check -p sb-clipboard --no-default-features --features wayland-backend \
+  --target x86_64-unknown-linux-gnu                                            # Wayland path
+```
+
 **Clipboard probe** — the tool for answering "why didn't *that* copy sync?". It prints the pasteboard
 type list (UTIs), the concealed marker, the file paths it resolved, and what `read()` produced:
 
