@@ -68,9 +68,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # 버전은 package.json 의 packageManager 필드에서 읽는다 — pnpm-workspace.yaml 의
+      # allowBuilds 는 pnpm 11+ 문법이라 9 로는 install 자체가 실패한다.
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -97,9 +97,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
             librsvg2-dev libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
+      # 버전은 package.json 의 packageManager 필드에서 읽는다 — pnpm-workspace.yaml 의
+      # allowBuilds 는 pnpm 11+ 문법이라 9 로는 install 자체가 실패한다.
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -130,9 +130,9 @@ jobs:
           workspaces: |
             .
             src-tauri
+      # 버전은 package.json 의 packageManager 필드에서 읽는다 — pnpm-workspace.yaml 의
+      # allowBuilds 는 pnpm 11+ 문법이라 9 로는 install 자체가 실패한다.
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
       - uses: actions/setup-node@v4
         with:
           node-version: 22

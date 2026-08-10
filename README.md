@@ -102,7 +102,7 @@ Design rationale and the full specification live in [`PLAN.md`](./PLAN.md) (v2.0
 |---|---|---|
 | Rust | 1.82+ (stable) | `rust-version` floor in `Cargo.toml` |
 | Node.js | 20+ (22 in CI) | frontend build only |
-| pnpm | 9+ | `corepack enable pnpm` works |
+| pnpm | 11+ | Pinned by `packageManager` in `package.json`; `corepack enable pnpm` picks it up. `pnpm-workspace.yaml` uses the pnpm 11 `allowBuilds` syntax, so pnpm 9/10 cannot install |
 | Tauri CLI | `^2` | `cargo install tauri-cli --version '^2'` |
 
 **Linux build packages** (Debian/Ubuntu):
