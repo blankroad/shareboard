@@ -60,6 +60,49 @@ fn mib(n: u64) -> String {
     format!("{:.1} MB", n as f64 / 1_048_576.0)
 }
 
+/// 파일 접근 실패를 사용자가 바로 조치할 수 있는 문장으로 바꾼다.
+///
+/// macOS 는 데스크탑·문서·다운로드 폴더가 TCC 로 보호돼 있어, 권한을 안 준 앱은
+/// `Operation not permitted` 를 받는다 — "읽을 수 없습니다"만 보여주면 원인을 알 수 없다.
+/// iCloud/OneDrive 의 미다운로드 placeholder 는 `NotFound` 로 나타난다.
+fn access_hint(path: &Path, e: &std::io::Error) -> String {
+    use std::io::ErrorKind;
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string());
+    match e.kind() {
+        ErrorKind::PermissionDenied => format!(
+            "'{name}' 에 접근할 수 없습니다 — {}. macOS 라면 시스템 설정 → 개인정보 보호 및 보안 → \
+             파일 및 폴더(또는 전체 디스크 접근 권한)에서 shareboard 를 허용해 주세요. 경로: {}",
+            e,
+            path.display()
+        ),
+        ErrorKind::NotFound if is_icloud_placeholder(path) => format!(
+            "'{name}' 은 iCloud 에 있고 이 기기에 아직 내려받지 않은 파일입니다 — Finder 에서 \
+             한 번 열어(다운로드) 뒤 다시 복사해 주세요"
+        ),
+        ErrorKind::NotFound => format!(
+            "'{name}' 이 디스크에 없습니다 — 클라우드 동기화 대기 중이거나 다른 앱이 만든 임시 \
+             파일일 수 있습니다. 경로: {}",
+            path.display()
+        ),
+        _ => format!("'{name}' 을 읽을 수 없습니다 — {} (경로: {})", e, path.display()),
+    }
+}
+
+/// iCloud Drive 미다운로드 파일인가 — macOS 는 `.<name>.icloud` placeholder 만 두고 본체를
+/// 비운다. Finder 에는 파일이 보이므로 사용자는 "왜 안 되지?"가 된다.
+fn is_icloud_placeholder(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+        return false;
+    };
+    let Some(parent) = path.parent() else {
+        return false;
+    };
+    parent.join(format!(".{name}.icloud")).exists()
+}
+
 /// 경로 목록 → `Files` 클립 콘텐츠.
 ///
 /// 건너뛸 때는 `ClipError::Skipped(사용자에게 보여줄 이유)` 를 돌려준다 — 파일 0개 ·
@@ -79,10 +122,16 @@ pub fn bundle_from_paths(paths: &[PathBuf]) -> Result<ClipContent, ClipError> {
     let mut targets: Vec<&Path> = Vec::new();
     let mut total: u64 = 0;
     let mut had_dir = false;
+    // 실패 사유는 첫 번째 것을 사용자에게 그대로 보여준다(경로 + OS 에러).
+    let mut first_error: Option<String> = None;
     for p in paths {
-        let Ok(md) = std::fs::metadata(p) else {
-            tracing::warn!("파일 정보를 읽을 수 없어 건너뜁니다: {}", p.display());
-            continue;
+        let md = match std::fs::metadata(p) {
+            Ok(md) => md,
+            Err(e) => {
+                tracing::warn!("파일 정보를 읽을 수 없어 건너뜁니다: {} — {e}", p.display());
+                first_error.get_or_insert_with(|| access_hint(p, &e));
+                continue;
+            }
         };
         if md.is_dir() {
             had_dir = true;
@@ -99,15 +148,16 @@ pub fn bundle_from_paths(paths: &[PathBuf]) -> Result<ClipContent, ClipError> {
         targets.push(p.as_path());
     }
     if targets.is_empty() {
-        return Err(ClipError::Skipped(if had_dir {
-            "폴더는 아직 지원하지 않습니다 — 파일을 골라 복사해 주세요".into()
-        } else {
-            "복사된 파일을 읽을 수 없습니다".into()
+        return Err(ClipError::Skipped(match (had_dir, first_error) {
+            (true, _) => "폴더는 아직 지원하지 않습니다 — 파일을 골라 복사해 주세요".into(),
+            (false, Some(why)) => why,
+            (false, None) => "복사된 파일을 읽을 수 없습니다".into(),
         }));
     }
 
     // 2) 상한 안이므로 실제로 읽는다.
     let mut files = Vec::with_capacity(targets.len());
+    let mut read_error: Option<String> = None;
     for p in targets {
         let name = p
             .file_name()
@@ -115,11 +165,16 @@ pub fn bundle_from_paths(paths: &[PathBuf]) -> Result<ClipContent, ClipError> {
             .unwrap_or_else(|| "unnamed".into());
         match std::fs::read(p) {
             Ok(data) => files.push(FileEntry { name, data }),
-            Err(e) => tracing::warn!("파일 읽기 실패({}): {e}", p.display()),
+            Err(e) => {
+                tracing::warn!("파일 읽기 실패({}): {e}", p.display());
+                read_error.get_or_insert_with(|| access_hint(p, &e));
+            }
         }
     }
     if files.is_empty() {
-        return Err(ClipError::Skipped("복사된 파일을 읽을 수 없습니다".into()));
+        return Err(ClipError::Skipped(
+            read_error.unwrap_or_else(|| "복사된 파일을 읽을 수 없습니다".into()),
+        ));
     }
 
     let bundle = FileBundle::new(files);
@@ -147,8 +202,23 @@ mod tests {
     #[test]
     fn empty_and_unreadable_paths_report_a_reason() {
         assert!(skip_reason(bundle_from_paths(&[])).contains("없습니다"));
-        let missing = bundle_from_paths(&[PathBuf::from("/definitely/not/here-xyz")]);
-        assert!(!skip_reason(missing).is_empty());
+        // 없는 파일은 경로와 함께 "디스크에 없다"고 말해야 한다(원인 추적 가능하게).
+        let why = skip_reason(bundle_from_paths(&[PathBuf::from(
+            "/definitely/not/here-xyz.pdf",
+        )]));
+        assert!(why.contains("here-xyz.pdf"), "{why}");
+        assert!(why.contains("디스크에 없습니다"), "{why}");
+    }
+
+    #[test]
+    fn icloud_placeholder_gets_its_own_message() {
+        let dir = std::env::temp_dir().join(format!("sb-icloud-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // 본체는 없고 placeholder 만 있는 상태를 만든다.
+        std::fs::write(dir.join(".big.pdf.icloud"), b"placeholder").unwrap();
+        let why = skip_reason(bundle_from_paths(&[dir.join("big.pdf")]));
+        assert!(why.contains("iCloud"), "{why}");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

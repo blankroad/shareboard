@@ -84,8 +84,11 @@ pub fn read_file_paths() -> Vec<PathBuf> {
     };
     for item in items.iter() {
         if let Some(s) = item.stringForType(ty) {
-            if let Some(p) = file_url_to_path(&s.to_string()) {
-                out.push(p);
+            let raw = s.to_string();
+            match file_url_to_path(&raw) {
+                Some(p) => out.push(p),
+                // URL 을 경로로 못 바꾼 경우 — 원본 문자열이 있어야 원인을 알 수 있다.
+                None => tracing::warn!("파일 URL 을 경로로 변환 실패: {raw}"),
             }
         }
     }
