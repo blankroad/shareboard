@@ -580,13 +580,21 @@ two clients complete a full E2E sync through a real relay — one for text, one 
 also asserts the relay never sees a filename. `sb-net` stands up an actual TLS server on loopback.
 The desktop app crate adds 7 more (`cd src-tauri && cargo test -p shareboard`).
 
-**Clipboard probe** — check what a platform actually puts on the clipboard (useful when verifying
-file support on a new OS):
+**Clipboard probe** — the tool for answering "why didn't *that* copy sync?". It prints the pasteboard
+type list (UTIs), the concealed marker, the file paths it resolved, and what `read()` produced:
 
 ```bash
-cargo run -p sb-clipboard --example clip_probe            # print current clipboard
-cargo run -p sb-clipboard --example clip_probe -- a.txt   # put a file on the clipboard
+cargo run -p sb-clipboard --example clip_probe                  # inspect current clipboard
+cargo run -p sb-clipboard --example clip_probe -- a.txt         # put a file on it (modern file URL)
+cargo run -p sb-clipboard --example clip_probe -- --ref a.txt   # Finder-style file *reference* URL
+cargo run -p sb-clipboard --example clip_probe -- --legacy a.txt # legacy NSFilenamesPboardType
+cargo run -p sb-clipboard --example clip_probe -- --data com.adobe.pdf x.pdf  # app-style data copy
+cargo run -p sb-clipboard --example clip_probe -- --type com.adobe.pdf        # unsupported-format path
 ```
+
+If an app's copy does not sync, run the first command right after copying: an unchanged/empty type
+list means that app never wrote to the system pasteboard (some apps implement copy/paste internally),
+which no clipboard tool can see.
 
 **Icons:** `assets/icons/app-icon.svg` is the master. `scripts/gen-icons.sh` renders it at 1024 px with
 resvg, feeds `cargo tauri icon` for the platform sets, and emits tray PNGs at 16/22/32/44 px as macOS

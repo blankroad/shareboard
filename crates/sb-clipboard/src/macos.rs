@@ -119,25 +119,78 @@ fn file_url_to_path(url_str: &str) -> Option<PathBuf> {
     Some(PathBuf::from(p))
 }
 
-/// 클립보드의 파일 URL 목록 → 경로. 파일 클립이 아니면 빈 Vec.
+/// 레거시 `NSFilenamesPboardType`(경로 문자열 배열 plist)로 올라온 파일 목록.
+///
+/// deprecated 지만 여전히 널리 쓰인다 — 예제 코드·직접 만든 앱이 이 API 로 파일을 복사하면
+/// 최신 `public.file-url` 이 생기지 않는 경우가 있어, 이걸 안 보면 "아무 일도 안 일어난다".
+fn read_legacy_filenames(pb: &NSPasteboard) -> Vec<PathBuf> {
+    use objc2_foundation::NSArray;
+    let ty = NSString::from_str("NSFilenamesPboardType");
+    let Some(plist) = pb.propertyListForType(&ty) else {
+        return Vec::new();
+    };
+    let Some(arr) = plist.downcast_ref::<NSArray>() else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for item in arr.iter() {
+        if let Some(s) = item.downcast_ref::<NSString>() {
+            let p = s.to_string();
+            if !p.is_empty() {
+                out.push(PathBuf::from(p));
+            }
+        }
+    }
+    if !out.is_empty() {
+        tracing::debug!("레거시 NSFilenamesPboardType 에서 파일 {}개 읽음", out.len());
+    }
+    out
+}
+
+/// 클립보드의 파일 목록 → 경로. 파일 클립이 아니면 빈 Vec.
+///
+/// 최신 `public.file-url` 을 먼저 보고, 없으면 레거시 `NSFilenamesPboardType` 로 폴백한다.
 pub fn read_file_paths() -> Vec<PathBuf> {
     let pb = NSPasteboard::generalPasteboard();
     let ty = unsafe { NSPasteboardTypeFileURL };
     let mut out = Vec::new();
-    let Some(items) = pb.pasteboardItems() else {
-        return out;
-    };
-    for item in items.iter() {
-        if let Some(s) = item.stringForType(ty) {
-            let raw = s.to_string();
-            match file_url_to_path(&raw) {
-                Some(p) => out.push(p),
-                // URL 을 경로로 못 바꾼 경우 — 원본 문자열이 있어야 원인을 알 수 있다.
-                None => tracing::warn!("파일 URL 을 경로로 변환 실패: {raw}"),
+    if let Some(items) = pb.pasteboardItems() {
+        for item in items.iter() {
+            if let Some(s) = item.stringForType(ty) {
+                let raw = s.to_string();
+                match file_url_to_path(&raw) {
+                    Some(p) => out.push(p),
+                    // URL 을 경로로 못 바꾼 경우 — 원본 문자열이 있어야 원인을 알 수 있다.
+                    None => tracing::warn!("파일 URL 을 경로로 변환 실패: {raw}"),
+                }
             }
         }
     }
+    if out.is_empty() {
+        out = read_legacy_filenames(&pb);
+    }
     out
+}
+
+/// **테스트용** — 레거시 `NSFilenamesPboardType`(경로 배열 plist)만 올린다.
+/// 직접 만든 앱·오래된 앱이 파일을 복사하는 방식 재현(clip_probe --legacy).
+pub fn write_legacy_filenames(paths: &[PathBuf]) -> bool {
+    use objc2::runtime::AnyObject;
+    use objc2_foundation::NSArray;
+    let pb = NSPasteboard::generalPasteboard();
+    let ty = NSString::from_str("NSFilenamesPboardType");
+    pb.clearContents();
+    // SAFETY: owner=None(지연 제공자 없음) + 우리가 곧 setPropertyList 로 데이터를 채운다.
+    let _ = unsafe { pb.declareTypes_owner(&NSArray::from_slice(&[&*ty]), None) };
+    let strings: Vec<objc2::rc::Retained<NSString>> = paths
+        .iter()
+        .filter_map(|p| p.to_str())
+        .map(NSString::from_str)
+        .collect();
+    let refs: Vec<&NSString> = strings.iter().map(|s| &**s).collect();
+    let arr = NSArray::from_slice(&refs);
+    // SAFETY: NSFilenamesPboardType 의 plist 타입은 문자열 배열이다(문서화된 형태).
+    unsafe { pb.setPropertyList_forType(arr.as_ref() as &AnyObject, &ty) }
 }
 
 /// **테스트용** — Finder 처럼 *파일 참조 URL*(`file:///.file/id=…`)을 pasteboard 에 올린다.
@@ -302,6 +355,28 @@ mod tests {
             same_file(&resolved, &file),
             "참조 URL 이 실제 파일로 해석되어야 한다: {resolved:?}"
         );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 레거시 `NSFilenamesPboardType` 만 올린 클립도 읽어야 한다.
+    /// (macOS 가 public.file-url 로 브리지해 주기도 하지만, 안 해주는 앱/버전을 대비한 폴백.)
+    #[test]
+    fn reads_legacy_filenames_type() {
+        let dir = std::env::temp_dir().join(format!("sb-legacy-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("탐색기.md");
+        std::fs::write(&file, b"x").unwrap();
+
+        assert!(write_legacy_filenames(std::slice::from_ref(&file)));
+        let pb = NSPasteboard::generalPasteboard();
+        let got = read_legacy_filenames(&pb);
+        assert_eq!(got.len(), 1, "레거시 타입에서 직접 읽기");
+        assert!(same_file(&got[0], &file));
+
+        // 공개 경로(read_file_paths)로도 읽혀야 한다.
+        let via_public = read_file_paths();
+        assert!(!via_public.is_empty());
 
         std::fs::remove_dir_all(&dir).ok();
     }

@@ -37,9 +37,22 @@ fn main() {
         return;
     }
 
+    // --legacy: 레거시 NSFilenamesPboardType 만 올린다(직접 만든 앱이 흔히 쓰는 방식).
+    #[cfg(target_os = "macos")]
+    if args.first().map(|a| a == "--legacy").unwrap_or(false) && args.len() >= 2 {
+        let paths: Vec<PathBuf> = args[1..].iter().map(PathBuf::from).collect();
+        let ok = sb_clipboard::macos::write_legacy_filenames(&paths);
+        println!("레거시 NSFilenamesPboardType 로 올림: {ok}");
+        println!("타입 목록: {:?}", sb_clipboard::macos::available_types());
+        println!();
+    }
+
     // --ref: Finder 처럼 "파일 참조 URL"(file:///.file/id=…) 형태로 올린다(macOS).
     let as_ref = args.first().map(|a| a == "--ref").unwrap_or(false);
-    let is_data = args.first().map(|a| a == "--data").unwrap_or(false);
+    let is_data = args
+        .first()
+        .map(|a| a == "--data" || a == "--legacy")
+        .unwrap_or(false);
     let args: Vec<String> = if as_ref { args[1..].to_vec() } else { args };
 
     if !args.is_empty() && !is_data {
@@ -62,6 +75,11 @@ fn main() {
     }
 
     println!("파일 클립보드 지원: {}", files::files_supported());
+    #[cfg(target_os = "macos")]
+    {
+        println!("클립보드 타입 목록: {:?}", sb_clipboard::macos::available_types());
+        println!("민감 콘텐츠 표시: {}", sb_clipboard::macos::is_concealed_now());
+    }
     let raw = files::clipboard_file_paths();
     println!("클립보드의 파일 경로 {}개:", raw.len());
     for p in &raw {
