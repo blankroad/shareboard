@@ -116,6 +116,59 @@ pub fn emit_status(app: &AppHandle, core: &Core) {
     let _ = app.emit("status-changed", status_of(core));
 }
 
+/// OS 자동 시작 등록 상태를 설정값에 맞춘다(설정이 진실).
+pub fn sync_autostart(app: &AppHandle, enabled: bool) -> Result<(), String> {
+    use tauri_plugin_autostart::ManagerExt;
+    let m = app.autolaunch();
+    let now = m.is_enabled().map_err(|e| e.to_string())?;
+    if now == enabled {
+        return Ok(());
+    }
+    if enabled { m.enable() } else { m.disable() }.map_err(|e| e.to_string())
+}
+
+/// 히스토리 팝업 토글(트레이·UI 버튼용). 핫키와 동일 동작.
+#[tauri::command]
+pub fn toggle_quick(app: AppHandle) {
+    crate::quick::toggle(&app);
+}
+
+/// 자동 시작 실제 등록 여부(OS 상태).
+#[tauri::command]
+pub fn get_autostart(app: AppHandle) -> Result<bool, String> {
+    use tauri_plugin_autostart::ManagerExt;
+    app.autolaunch().is_enabled().map_err(|e| e.to_string())
+}
+
+/// 자동 시작 켬/끔 → OS 등록 + 설정 저장.
+#[tauri::command]
+pub async fn set_autostart(app: AppHandle, state: State<'_, AppState>, enabled: bool) -> Result<(), String> {
+    sync_autostart(&app, enabled)?;
+    let mut core = state.lock().await;
+    core.settings.app.autostart = enabled;
+    let _ = sb_store::files::save_json(&core.data_dir.join("settings.json"), &core.settings);
+    Ok(())
+}
+
+/// 팝업 핫키 변경 → 즉시 재등록 + 저장. 실패하면 이전 핫키를 되살린다.
+#[tauri::command]
+pub async fn set_quick_hotkey(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    accel: String,
+) -> Result<(), String> {
+    let prev = state.lock().await.settings.app.quick_hotkey.clone();
+    if let Err(e) = crate::quick::apply_hotkey(&app, &accel) {
+        // apply_hotkey 는 먼저 전부 해제하므로, 실패 시 이전 값으로 복구해야 한다.
+        let _ = crate::quick::apply_hotkey(&app, &prev);
+        return Err(e);
+    }
+    let mut core = state.lock().await;
+    core.settings.app.quick_hotkey = accel;
+    let _ = sb_store::files::save_json(&core.data_dir.join("settings.json"), &core.settings);
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn app_info(state: State<'_, AppState>) -> Result<AppInfo, String> {
     let core = state.lock().await;
@@ -149,18 +202,33 @@ pub async fn update_settings(
     settings: sb_core::Settings,
 ) -> Result<(), String> {
     let mut core = state.lock().await;
+    // 핫키·자동 시작은 OS 등록이 걸려 있어 값 변화를 감지해 반영한다.
+    let prev_hotkey = core.settings.app.quick_hotkey.clone();
+    let prev_autostart = core.settings.app.autostart;
     core.settings = settings;
     let enabled = core.settings.sync.enabled;
     core.engine.set_enabled(enabled);
     // 디스크 저장.
     let path = core.data_dir.join("settings.json");
     sb_store::files::save_json(&path, &core.settings).map_err(|e| e.to_string())?;
+    let new_hotkey = core.settings.app.quick_hotkey.clone();
+    let new_autostart = core.settings.app.autostart;
     let need_reconnect = core.settings.server.addr.is_some();
     emit_status(&app, &core);
     let rc = core.reconnect.clone();
     drop(core);
     if need_reconnect {
         rc.notify_one();
+    }
+    if new_hotkey != prev_hotkey {
+        if let Err(e) = crate::quick::apply_hotkey(&app, &new_hotkey) {
+            // 저장은 이미 됐으므로 이전 핫키로 되돌려 "아무 핫키도 없는" 상태를 피한다.
+            let _ = crate::quick::apply_hotkey(&app, &prev_hotkey);
+            return Err(e);
+        }
+    }
+    if new_autostart != prev_autostart {
+        sync_autostart(&app, new_autostart)?;
     }
     // 기기 이름이 바뀌었을 수 있으니 프로필 재발행.
     crate::worker::send_profile(state.inner()).await;

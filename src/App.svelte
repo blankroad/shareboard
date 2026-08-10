@@ -1,6 +1,16 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api, on, type Status, type Member, type HistoryItem, type AppInfo, type Thumb } from "./lib/ipc";
+  import {
+    api,
+    on,
+    loadThumbs,
+    thumbKey,
+    type Status,
+    type Member,
+    type HistoryItem,
+    type AppInfo,
+    type Thumb,
+  } from "./lib/ipc";
 
   let info = $state<AppInfo | null>(null);
   let status = $state<Status | null>(null);
@@ -26,30 +36,16 @@
   let copied = $state<string | null>(null);
 
   let settings = $state<any>(null);
+  let hotkeyDraft = $state("");
+  let hotkeyErr = $state<string | null>(null);
+  /// OS 실제 등록 상태(설정값과 어긋날 수 있어 따로 읽는다).
+  let autostart = $state(false);
 
   const configured = $derived(!!status?.server_addr);
 
-  const thumbKey = (h: HistoryItem) => `${h.id}:${h.has_body ? 1 : 0}`;
-
-  /// 이미지 항목 썸네일을 항목별로 지연 로드한다(목록에 새로 등장한 것만).
-  async function loadThumbs(list: HistoryItem[]) {
-    for (const h of list) {
-      if (h.kind !== "image") continue;
-      const k = thumbKey(h);
-      if (k in thumbs) continue;
-      thumbs[k] = null; // 중복 요청 방지
-      try {
-        thumbs[k] = await api.getThumbnail(h.id);
-      } catch {}
-    }
-    // 사라진 항목의 썸네일 정리.
-    const alive = new Set(list.filter((h) => h.kind === "image").map(thumbKey));
-    for (const k of Object.keys(thumbs)) if (!alive.has(k)) delete thumbs[k];
-  }
-
   function setHistory(h: HistoryItem[]) {
     history = h;
-    void loadThumbs(h);
+    void loadThumbs(h, thumbs);
   }
 
   async function refresh() {
@@ -63,6 +59,10 @@
   onMount(async () => {
     info = await api.appInfo();
     settings = await api.getSettings();
+    hotkeyDraft = settings.app.quick_hotkey ?? "";
+    try {
+      autostart = await api.getAutostart();
+    } catch {}
     await refresh();
     on("status-changed", () => api.getStatus().then((s) => (status = s)));
     on("members-changed", () => api.getMembers().then((m) => (members = m)));
@@ -143,6 +143,26 @@
   async function saveSettings() {
     await api.updateSettings(settings);
     settings = await api.getSettings();
+  }
+  /// 핫키는 OS 등록이 걸려 있어 저장 버튼과 분리한다(실패 시 이전 조합 유지).
+  async function saveHotkey() {
+    hotkeyErr = null;
+    try {
+      await api.setQuickHotkey(hotkeyDraft.trim());
+      settings = await api.getSettings();
+      hotkeyDraft = settings.app.quick_hotkey;
+    } catch (e: any) {
+      hotkeyErr = String(e);
+      hotkeyDraft = settings.app.quick_hotkey;
+    }
+  }
+  async function toggleAutostart() {
+    try {
+      await api.setAutostart(!autostart);
+      autostart = await api.getAutostart();
+    } catch (e: any) {
+      hotkeyErr = String(e);
+    }
   }
   async function doReset() {
     await api.resetOnboarding();
@@ -412,10 +432,38 @@
       </div>
       <div class="card">
         <h3>히스토리 / 개인정보</h3>
-        <label class="toggle"><input type="checkbox" bind:checked={settings.history.persist_enabled} style="width:auto" /> 디스크에 암호화 저장(기본 꺼짐)</label>
+        <p class="pill">히스토리는 <b>메모리에만</b> 둡니다 — 앱을 끄면 사라집니다(클립보드는 최신성이 중요하고, 디스크에 남기지 않는 게 안전합니다).</p>
         <label class="toggle"><input type="checkbox" bind:checked={settings.privacy.exclude_concealed} style="width:auto" /> 비밀번호 매니저 콘텐츠 제외</label>
         <label>인메모리 히스토리 최대 개수</label>
         <input type="number" bind:value={settings.history.memory_max_items} />
+      </div>
+      <div class="card">
+        <h3>단축키 / 시작</h3>
+        <div class="row">
+          <div class="grow">히스토리 팝업 핫키</div>
+          <span class="mono">{settings.app.quick_hotkey || "(없음)"}</span>
+          <button class="btn" onclick={() => api.toggleQuick()}>지금 열기</button>
+        </div>
+        <label>핫키 조합 (비우면 끔 · 예: CmdOrCtrl+Shift+V, Alt+Space)</label>
+        <div class="row">
+          <input class="mono grow" bind:value={hotkeyDraft} placeholder="CmdOrCtrl+Shift+V" />
+          <button class="btn primary" disabled={hotkeyDraft === settings.app.quick_hotkey} onclick={saveHotkey}>
+            적용
+          </button>
+        </div>
+        {#if hotkeyErr}<div class="warn-banner">{hotkeyErr}</div>{/if}
+        <div class="row">
+          <div class="grow">로그인 시 자동 실행</div>
+          <button
+            class="toggle plain"
+            onclick={toggleAutostart}
+            role="switch"
+            aria-checked={autostart}
+            aria-label="로그인 시 자동 실행"
+          >
+            <div class="switch {autostart ? 'on' : ''}"></div>
+          </button>
+        </div>
       </div>
       <div class="row"><button class="btn primary" onclick={saveSettings}>저장</button></div>
     {/if}

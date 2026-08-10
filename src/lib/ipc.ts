@@ -76,7 +76,36 @@ export const api = {
   resetOnboarding: () => invoke("reset_onboarding"),
   hostWorkspace: (name: string) => invoke<HostInfo>("host_workspace", { name }),
   getHostInfo: () => invoke<HostInfo | null>("get_host_info"),
+  toggleQuick: () => invoke("toggle_quick"),
+  getAutostart: () => invoke<boolean>("get_autostart"),
+  setAutostart: (enabled: boolean) => invoke("set_autostart", { enabled }),
+  setQuickHotkey: (accel: string) => invoke("set_quick_hotkey", { accel }),
 };
+
+/// 자기 창 숨기기 — 팝업이 Esc/복사 후 사라질 때 사용.
+export async function hideSelf() {
+  const { getCurrentWindow } = await import("@tauri-apps/api/window");
+  await getCurrentWindow().hide();
+}
+
+/// 썸네일 캐시 키 — 본문 도착 여부가 바뀌면 다시 시도하도록 섞는다.
+export const thumbKey = (h: HistoryItem) => `${h.id}:${h.has_body ? 1 : 0}`;
+
+/// 이미지 항목 썸네일을 지연 로드해 `into` 에 채운다(이미 시도한 키는 건너뜀).
+export async function loadThumbs(list: HistoryItem[], into: Record<string, Thumb | null>) {
+  for (const h of list) {
+    if (h.kind !== "image") continue;
+    const k = thumbKey(h);
+    if (k in into) continue;
+    into[k] = null; // 중복 요청 방지
+    try {
+      into[k] = await api.getThumbnail(h.id);
+    } catch {}
+  }
+  // 사라진 항목의 썸네일 정리.
+  const alive = new Set(list.filter((h) => h.kind === "image").map(thumbKey));
+  for (const k of Object.keys(into)) if (!alive.has(k)) delete into[k];
+}
 
 export async function on(event: string, cb: () => void): Promise<UnlistenFn> {
   const { listen } = await import("@tauri-apps/api/event");

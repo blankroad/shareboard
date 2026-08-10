@@ -21,6 +21,20 @@
         "minHeight": 480,
         "visible": true,
         "resizable": true
+      },
+      {
+        "label": "quick",
+        "title": "shareboard — 히스토리",
+        "url": "index.html#quick",
+        "width": 560,
+        "height": 420,
+        "visible": false,
+        "resizable": false,
+        "decorations": false,
+        "transparent": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "center": true
       }
     ],
     "security": {

@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "shareboard 기본 권한 — 최소 표면(§4.6). shell/fs/http 플러그인 미포함.",
-  "windows": ["main"],
+  "windows": ["main", "quick"],
   "permissions": [
     "core:default",
     "core:event:default",

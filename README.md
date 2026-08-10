@@ -273,8 +273,15 @@ messenger hands it straight to a running app, which joins and raises its window.
 Once joined, the app lives in the tray. Copying anything on any member device propagates to the rest
 within a few hundred milliseconds.
 
-**Tray menu:** **창 열기** (*Show window*) · **동기화 켬/끔** (*Toggle sync*) · **종료** (*Quit*).
-Closing the window hides it rather than quitting.
+**Tray menu:** **창 열기** (*Show window*) · **히스토리 팝업** (*History popup*) · **동기화 켬/끔**
+(*Toggle sync*) · **종료** (*Quit*). Closing the window hides it rather than quitting.
+
+**History popup — `CmdOrCtrl+Shift+V`:** a frameless, always-on-top panel that opens anywhere. Type to
+filter, `↑`/`↓` to move, `Enter` to copy the selected clip to the OS clipboard (then paste yourself),
+`Esc` or clicking away to dismiss. Image clips show a thumbnail with their original dimensions. The
+hotkey is configurable in settings — leave it empty to disable — and registration fails loudly if
+another app already owns the combination. Automatic pasting is deliberately not implemented: it would
+require macOS Accessibility permission.
 
 **Tabs:**
 
@@ -325,12 +332,17 @@ Open the **설정** (*Settings*) tab and press **저장** (*Save*) to apply.
 | 동기화 (*Sync*) | 텍스트 동기화 (`sync_text`) | on | Sync text clips |
 | | 이미지 동기화 (`sync_images`) | on | Sync PNG clips |
 | | 고위험 콘텐츠 확인 (`confirm_risky_content`) | on | *Declared, not yet enforced* |
-| 히스토리 / 개인정보 | 디스크에 암호화 저장 (`persist_enabled`) | **off** | *Declared, not yet enforced* — history is in-memory today |
-| | 비밀번호 매니저 콘텐츠 제외 (`exclude_concealed`) | on | Skips clips flagged concealed (macOS hint implemented) |
+| 히스토리 / 개인정보 | 비밀번호 매니저 콘텐츠 제외 (`exclude_concealed`) | on | Skips clips flagged concealed (macOS hint implemented) |
 | | 인메모리 히스토리 최대 개수 (`memory_max_items`) | 30 | In-memory history cap |
+| 단축키 / 시작 (*Hotkey / startup*) | 히스토리 팝업 핫키 (`quick_hotkey`) | `CmdOrCtrl+Shift+V` | Global hotkey for the popup; applied immediately via **적용**, empty disables it. Rejected combinations keep the previous one |
+| | 로그인 시 자동 실행 (`autostart`) | off | Registers a login item (LaunchAgent on macOS); the toggle reflects the **actual OS state**, applied immediately |
+
+**History is memory-only by design.** Clips are never written to disk — a clipboard is only useful
+while it is current, and not persisting it is the safer default. `history.db` still exists for the
+encrypted store's schema but nothing is written to it.
 
 Not exposed in the UI but present in `settings.json`: `max_content_bytes` (10 MiB, range 1–100 MiB),
-`autostart`, `log_level`, `language`, `theme`, `excluded_apps`, `retention_days`. Fields marked
+`log_level`, `language`, `theme`, `excluded_apps`, `retention_days`, `persist_enabled`. Fields marked
 *declared, not yet enforced* round-trip through the file and the UI but do not change behaviour yet.
 
 ### Running two instances on one machine

@@ -71,6 +71,8 @@ input, select {
 label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 4px; }
 
 .toggle { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+/* 스위치를 감싸는 버튼 — 버튼 기본 외형 제거(키보드 접근성은 button 이 담당). */
+button.toggle.plain { border: 0; background: transparent; padding: 0; }
 .switch { width: 40px; height: 22px; border-radius: 11px; background: var(--off); position: relative; transition: 0.15s; }
 .switch.on { background: var(--ok); }
 .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: 0.15s; }
@@ -85,6 +87,29 @@ label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 4px
   border: 1px solid var(--border); border-radius: 6px; background: var(--bg);
 }
 .thumb-empty { display: flex; align-items: center; justify-content: center; font-size: 18px; color: var(--muted); }
+
+/* 히스토리 팝업(quick 창) — 장식 없는 창이라 여기서 전체 레이아웃을 잡는다. */
+.qwrap {
+  height: 100vh; display: flex; flex-direction: column; gap: 8px;
+  padding: 12px; background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+}
+.qsearch { flex: none; font-size: 14px; padding: 10px 12px; }
+.qlist { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+.qrow {
+  display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+  padding: 7px 9px; border: 0; border-radius: 8px; background: transparent;
+  color: var(--text); font-size: 13px; cursor: pointer;
+}
+.qrow.sel { background: var(--primary-weak); }
+.qrow:disabled { opacity: 0.45; cursor: default; }
+.qthumb {
+  width: 32px; height: 32px; flex: none; object-fit: cover;
+  border: 1px solid var(--border); border-radius: 6px; background: var(--bg);
+}
+.qthumb-empty {
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 700; color: var(--muted);
+}
 
 .empty { text-align: center; color: var(--muted); padding: 40px 0; }
 .code-box { font-family: ui-monospace, monospace; font-size: 22px; letter-spacing: 3px; text-align: center; padding: 16px; background: var(--primary-weak); border-radius: 10px; color: var(--primary); }

@@ -6,6 +6,7 @@
 
 mod commands;
 mod core;
+mod quick;
 mod thumb;
 mod worker;
 
@@ -97,9 +98,10 @@ fn build_core() -> Core {
 
 fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     let show = MenuItem::with_id(app, "show", "창 열기", true, None::<&str>)?;
+    let quick = MenuItem::with_id(app, "quick", "히스토리 팝업", true, None::<&str>)?;
     let toggle = MenuItem::with_id(app, "toggle_sync", "동기화 켬/끔", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "종료", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show, &toggle, &quit])?;
+    let menu = Menu::with_items(app, &[&show, &quick, &toggle, &quit])?;
 
     let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/tray/tray-template-44.png"))
         .expect("tray icon");
@@ -117,6 +119,7 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
                     let _ = w.set_focus();
                 }
             }
+            "quick" => crate::quick::toggle(app),
             "quit" => app.exit(0),
             "toggle_sync" => {
                 let app = app.clone();
@@ -147,9 +150,36 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        // 로그인 시 자동 실행. macOS 는 LaunchAgent(로그인 항목보다 조용함).
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .manage(state.clone())
         .setup(move |app| {
             setup_tray(app)?;
+
+            // 히스토리 팝업 핫키 + 자동 시작을 설정값에 맞춘다(설정이 진실).
+            {
+                let handle = app.handle().clone();
+                let st = state.clone();
+                tauri::async_runtime::spawn(async move {
+                    let (accel, autostart) = {
+                        let core = st.lock().await;
+                        (
+                            core.settings.app.quick_hotkey.clone(),
+                            core.settings.app.autostart,
+                        )
+                    };
+                    if let Err(e) = crate::quick::apply_hotkey(&handle, &accel) {
+                        tracing::warn!("{e}");
+                    }
+                    if let Err(e) = commands::sync_autostart(&handle, autostart) {
+                        tracing::warn!("자동 시작 설정 실패: {e}");
+                    }
+                });
+            }
 
             // shareboard:// 딥링크 자동 참여.
             {
@@ -185,12 +215,17 @@ fn main() {
             });
             Ok(())
         })
-        .on_window_event(|window, event| {
+        .on_window_event(|window, event| match event {
             // 창 닫기 = 숨김(트레이 상주). WebView 메모리는 유지되나 v1 수용.
-            if let WindowEvent::CloseRequested { api, .. } = event {
+            WindowEvent::CloseRequested { api, .. } => {
                 api.prevent_close();
                 let _ = window.hide();
             }
+            // 팝업은 포커스를 잃으면 사라진다(런처 관례). 메인 창은 그대로 남는다.
+            WindowEvent::Focused(false) if window.label() == crate::quick::LABEL => {
+                let _ = window.hide();
+            }
+            _ => {}
         })
         .invoke_handler(tauri::generate_handler![
             commands::app_info,
@@ -215,6 +250,10 @@ fn main() {
             commands::reset_onboarding,
             commands::host_workspace,
             commands::get_host_info,
+            commands::toggle_quick,
+            commands::get_autostart,
+            commands::set_autostart,
+            commands::set_quick_hotkey,
         ])
         .run(tauri::generate_context!())
         .expect("shareboard 실행 실패");

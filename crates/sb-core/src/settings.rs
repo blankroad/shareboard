@@ -217,10 +217,17 @@ pub struct AppSettings {
     /// null 이면 비식별 기본 장치명 사용(§7.3).
     #[serde(default)]
     pub device_name_override: Option<String>,
+    /// 히스토리 팝업 글로벌 핫키(Tauri accelerator). 빈 문자열이면 등록하지 않는다.
+    #[serde(default = "default_quick_hotkey")]
+    pub quick_hotkey: String,
 }
 
 fn info() -> String {
     "info".into()
+}
+/// macOS 는 Cmd, Windows/Linux 는 Ctrl 로 해석된다.
+pub fn default_quick_hotkey() -> String {
+    "CmdOrCtrl+Shift+V".into()
 }
 fn system() -> String {
     "system".into()
@@ -237,6 +244,7 @@ impl Default for AppSettings {
             language: "system".into(),
             theme: "system".into(),
             device_name_override: None,
+            quick_hotkey: default_quick_hotkey(),
         }
     }
 }
@@ -271,6 +279,16 @@ mod tests {
         assert!(s.privacy.exclude_concealed);
         assert!(!s.privacy.excluded_apps.is_empty());
         assert!(s.sync.confirm_risky_content);
+        assert!(!s.app.autostart, "자동 시작은 사용자가 켜야 함");
+        assert_eq!(s.app.quick_hotkey, "CmdOrCtrl+Shift+V");
+    }
+
+    /// 기존 settings.json(핫키 필드 없음)을 읽어도 기본 핫키가 채워져야 한다.
+    #[test]
+    fn old_settings_file_gets_default_hotkey() {
+        let old = r#"{ "app": { "autostart": false, "log_level": "info" } }"#;
+        let s = Settings::from_json(old).unwrap();
+        assert_eq!(s.app.quick_hotkey, "CmdOrCtrl+Shift+V");
     }
 
     #[test]
