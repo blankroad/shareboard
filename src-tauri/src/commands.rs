@@ -97,6 +97,43 @@ pub async fn host_workspace(
     })
 }
 
+/// 내장 서버를 중지하고 포트를 반납한다(앱은 계속 실행 — 클라이언트로 남는다).
+#[tauri::command]
+pub async fn stop_hosting(app: AppHandle, state: State<'_, AppState>) -> Result<bool, String> {
+    let was = crate::worker::stop_embedded_server(state.inner()).await;
+    let core = state.lock().await;
+    emit_status(&app, &core);
+    Ok(was)
+}
+
+/// 내장 서버를 껐다 켠다 — 포트를 반납한 뒤 같은 포트로 다시 바인딩한다.
+/// 워크스페이스·그룹 키는 그대로 유지된다(로그는 디스크에 영속).
+#[tauri::command]
+pub async fn restart_hosting(app: AppHandle, state: State<'_, AppState>) -> Result<HostInfo, String> {
+    let port = {
+        let c = state.lock().await;
+        c.settings.server.host_port
+    };
+    crate::worker::stop_embedded_server(state.inner()).await;
+    {
+        // 중지 시 host=false 로 내려가므로 재시작 의도를 복원한다(포트도 유지).
+        let mut c = state.lock().await;
+        c.settings.server.host_port = port;
+    }
+    let (addr, fp) = crate::worker::start_embedded_server(state.inner(), None)
+        .await
+        .map_err(|e| e.to_string())?;
+    let core = state.lock().await;
+    emit_status(&app, &core);
+    let rc = core.reconnect.clone();
+    drop(core);
+    rc.notify_one();
+    Ok(HostInfo {
+        addr,
+        fingerprint_hex: hex(&fp),
+    })
+}
+
 /// 현재 호스팅 정보(공유용). 호스팅 아니면 None.
 #[tauri::command]
 pub async fn get_host_info(state: State<'_, AppState>) -> Result<Option<HostInfo>, String> {
@@ -111,9 +148,23 @@ pub async fn get_host_info(state: State<'_, AppState>) -> Result<Option<HostInfo
     }
 }
 
-/// 상태 변경 이벤트 발행(무시 가능한 에러).
+/// 상태 변경 이벤트 발행(무시 가능한 에러) + 트레이 툴팁 갱신.
 pub fn emit_status(app: &AppHandle, core: &Core) {
     let _ = app.emit("status-changed", status_of(core));
+    update_tray_tooltip(app, core);
+}
+
+/// 트레이 툴팁에 호스팅 여부를 적는다 — 창을 닫아도 앱(과 서버)이 살아 있음을 알리는 유일한 단서다.
+fn update_tray_tooltip(app: &AppHandle, core: &Core) {
+    use tauri::tray::TrayIconId;
+    let text = match (&core.hosting, &core.host_addr) {
+        (true, Some(addr)) => format!("shareboard — 서버 실행 중 ({addr})"),
+        (true, None) => "shareboard — 서버 실행 중".to_string(),
+        _ => "shareboard".to_string(),
+    };
+    if let Some(tray) = app.tray_by_id(&TrayIconId::new("main")) {
+        let _ = tray.set_tooltip(Some(&text));
+    }
 }
 
 /// OS 자동 시작 등록 상태를 설정값에 맞춘다(설정이 진실).
@@ -502,10 +553,16 @@ pub async fn join_workspace(app: AppHandle, state: State<'_, AppState>, code: St
 /// 온보딩 초기화 — 조인 실패/취소 후 서버 설정을 지우고 온보딩으로 복귀.
 #[tauri::command]
 pub async fn reset_onboarding(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    // 호스팅 중이면 **먼저 서버를 내려 포트를 반납**한다 — 안 그러면 역할을 바꿨는데도 포트를
+    // 계속 물고 있어서 다시 서버로 만들 때 "이미 사용 중"이 된다.
+    crate::worker::stop_embedded_server(state.inner()).await;
+
     let mut core = state.lock().await;
     core.settings.server.addr = None;
     core.settings.server.fingerprint_hex = None;
     core.settings.server.workspace_name = None;
+    core.settings.server.host = false;
+    core.settings.server.host_port = None;
     core.server_fp = None;
     core.pending = None;
     core.joining = false;

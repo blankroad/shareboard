@@ -175,14 +175,22 @@ pub async fn start_embedded_server(
     let acceptor = tokio_rustls::TlsAcceptor::from(
         sb_server::tls::server_config(&server_id).map_err(|e| anyhow::anyhow!("{e}"))?,
     );
-    let listener = tokio::net::TcpListener::bind(bind_addr)
-        .await
-        .map_err(|e| anyhow::anyhow!("포트 {port} 바인딩 실패(이미 사용 중일 수 있음): {e}"))?;
+    let listener = tokio::net::TcpListener::bind(bind_addr).await.map_err(|e| {
+        // 누가 잡고 있는지까지 알려준다 — 대개 종료되지 않은 이전 인스턴스다.
+        match port_holder(port) {
+            Some(who) => anyhow::anyhow!(
+                "포트 {port} 을 {who} 가 이미 쓰고 있습니다. 이전 shareboard 가 남아 있으면 \
+                 트레이 메뉴에서 완전히 종료(창 닫기는 숨김일 뿐)한 뒤 다시 시도하세요"
+            ),
+            None => anyhow::anyhow!("포트 {port} 바인딩 실패(이미 사용 중일 수 있음): {e}"),
+        }
+    })?;
     let shared = sb_server::Shared::with_persistence(token_hash, data_dir.join("server"));
-    tokio::spawn(sb_server::serve(listener, acceptor, shared));
+    let task = tokio::spawn(sb_server::serve(listener, acceptor, shared));
     tracing::info!("내장 서버 시작 @ {bind}");
 
     let mut c = state.lock().await;
+    c.server_task = Some(task);
     c.hosting = true;
     c.host_addr = Some(bind.clone());
     c.host_fp = Some(server_fp);
@@ -193,6 +201,75 @@ pub async fn start_embedded_server(
     c.settings.server.host_port = Some(port);
     let _ = sb_store::files::save_json(&c.data_dir.join("settings.json"), &c.settings);
     Ok((bind, server_fp))
+}
+
+/// 내장 서버를 중지하고 **포트를 반납**한다. 호스팅 중이 아니었으면 false.
+///
+/// accept 루프를 abort 하면 리스너가 drop 되어 포트가 즉시 풀린다. 이미 맺어진 연결을 처리하는
+/// 하위 태스크는 살아 있을 수 있지만(리스너를 들고 있지 않다) 포트 재바인딩을 막지는 않는다.
+pub async fn stop_embedded_server(state: &AppState) -> bool {
+    let mut c = state.lock().await;
+    let was = c.hosting;
+    if let Some(task) = c.server_task.take() {
+        task.abort();
+    }
+    c.hosting = false;
+    c.host_addr = None;
+    c.host_fp = None;
+    // 재시작 시 자동 재호스팅되지 않게 설정에서도 내린다 — 안 내리면 다음 실행에서 또 포트를 잡는다.
+    c.settings.server.host = false;
+    let _ = sb_store::files::save_json(&c.data_dir.join("settings.json"), &c.settings);
+    if was {
+        tracing::info!("내장 서버 중지 — 포트 반납");
+    }
+    was
+}
+
+/// 그 포트를 잡고 있는 프로세스 설명(`PID 1234 (shareboard)`). 조회 실패하면 None.
+/// 진단 전용 — 외부 통신은 없고 로컬 프로세스만 들여다본다.
+fn port_holder(port: u16) -> Option<String> {
+    #[cfg(unix)]
+    {
+        let out = std::process::Command::new("/usr/sbin/lsof")
+            .args(["-nP", "-sTCP:LISTEN", "-t", &format!("-iTCP:{port}")])
+            .output()
+            .ok()?;
+        let pid = String::from_utf8_lossy(&out.stdout)
+            .split_whitespace()
+            .next()?
+            .to_string();
+        let name = std::process::Command::new("/bin/ps")
+            .args(["-o", "comm=", "-p", &pid])
+            .output()
+            .ok()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .filter(|s| !s.is_empty());
+        Some(match name {
+            Some(n) => format!("PID {pid} ({n})"),
+            None => format!("PID {pid}"),
+        })
+    }
+    #[cfg(windows)]
+    {
+        let out = std::process::Command::new("netstat")
+            .args(["-ano", "-p", "tcp"])
+            .output()
+            .ok()?;
+        let text = String::from_utf8_lossy(&out.stdout);
+        let needle = format!(":{port}");
+        let pid = text
+            .lines()
+            .filter(|l| l.contains("LISTENING") && l.contains(&needle))
+            .filter_map(|l| l.split_whitespace().last())
+            .next()?
+            .to_string();
+        Some(format!("PID {pid}"))
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = port;
+        None
+    }
 }
 
 fn now_ms() -> u64 {

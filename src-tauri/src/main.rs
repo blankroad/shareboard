@@ -85,6 +85,7 @@ fn build_core() -> Core {
         connected: false,
         gk_present,
         hosting: false,
+        server_task: None,
         host_addr: None,
         host_fp: None,
         joining: false,
@@ -150,7 +151,22 @@ fn main() {
 
     let state: AppState = Arc::new(Mutex::new(build_core()));
 
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+
+    // 두 인스턴스가 동시에 뜨면 뒤에 뜬 쪽이 포트 45871 을 못 잡고, 먼저 뜬 쪽이 계속 물고 있어
+    // "포트 선점" 혼란이 생긴다. 기본은 단일 인스턴스로 막고 기존 창을 띄운다.
+    // 단 SHAREBOARD_DATA_DIR 로 데이터 디렉터리를 분리한 경우는 의도된 다중 인스턴스(시연·테스트)라 허용.
+    if std::env::var_os("SHAREBOARD_DATA_DIR").is_none() {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.show();
+                let _ = w.unminimize();
+                let _ = w.set_focus();
+            }
+        }));
+    }
+
+    builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
@@ -253,6 +269,8 @@ fn main() {
             commands::reset_onboarding,
             commands::host_workspace,
             commands::get_host_info,
+            commands::stop_hosting,
+            commands::restart_hosting,
             commands::toggle_quick,
             commands::log_ui_error,
             commands::get_received_dir,

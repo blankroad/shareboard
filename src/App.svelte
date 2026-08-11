@@ -175,6 +175,33 @@
       hotkeyErr = String(e);
     }
   }
+  /// 서버 재시작 — 포트를 반납하고 같은 포트로 다시 바인딩(워크스페이스·키는 유지).
+  async function doRestartHosting() {
+    err = null;
+    busy = true;
+    try {
+      await api.restartHosting();
+      await refresh();
+    } catch (e: any) {
+      err = String(e);
+    } finally {
+      busy = false;
+    }
+  }
+  /// 서버 중지 — 포트를 놓고 클라이언트로만 남는다.
+  async function doStopHosting() {
+    if (!confirm("서버를 중지하면 다른 멤버가 이 기기로 접속할 수 없습니다. 계속할까요?")) return;
+    err = null;
+    busy = true;
+    try {
+      await api.stopHosting();
+      await refresh();
+    } catch (e: any) {
+      err = String(e);
+    } finally {
+      busy = false;
+    }
+  }
   async function doReset() {
     await api.resetOnboarding();
     await refresh();
@@ -424,6 +451,7 @@
     {/if}
 
     {#if tab === "settings" && settings}
+      {#if err}<div class="warn-banner">{err}</div>{/if}
       <div class="card">
         <h3>연결 / 역할</h3>
         {#if status?.hosting}
@@ -433,6 +461,17 @@
         {:else}
           <div class="row"><div class="grow">역할</div><span class="pill">클라이언트</span></div>
           <div class="row"><div class="grow">접속 서버</div><span class="mono">{status?.server_addr ?? "-"}</span></div>
+        {/if}
+        {#if status?.hosting}
+          <div class="row">
+            <span class="grow pill">
+              서버를 다시 띄우려면 <b>재시작</b>을 쓰세요 — 포트를 반납한 뒤 같은 포트로 다시 엽니다.
+              <b>중지</b>하면 이 기기는 클라이언트로만 남고 포트를 놓습니다.
+            </span>
+            <button class="btn" disabled={busy} onclick={doRestartHosting}>서버 재시작</button>
+            <button class="btn danger" disabled={busy} onclick={doStopHosting}>서버 중지</button>
+          </div>
+          <p class="pill">창을 닫아도 앱은 트레이에 남아 <b>서버가 계속 실행됩니다</b>. 완전히 끄려면 트레이 → 종료.</p>
         {/if}
         <div class="row">
           <span class="grow pill">역할을 바꾸려면(서버↔클라이언트) 재설정 후 처음 화면에서 다시 선택합니다.</span>

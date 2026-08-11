@@ -43,6 +43,9 @@ pub struct Core {
     pub gk_present: bool,
     /// 이 기기가 릴레이 서버를 호스팅 중인가.
     pub hosting: bool,
+    /// 내장 서버 accept 루프 핸들 — **포트를 놓으려면 이걸 abort 해야 한다**(리스너가 여기 산다).
+    /// 이게 없으면 앱을 죽이는 것 말고는 포트를 반납할 방법이 없다.
+    pub server_task: Option<tokio::task::JoinHandle<()>>,
     /// 호스팅 시 다른 사람이 접속할 주소 / 서버 지문(공유용).
     pub host_addr: Option<String>,
     pub host_fp: Option<[u8; 32]>,

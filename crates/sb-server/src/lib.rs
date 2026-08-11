@@ -837,6 +837,37 @@ mod integration {
         assert!(newest.preview.contains("보고서.pdf"), "{}", newest.preview);
     }
 
+    /// accept 루프를 abort 하면 **포트가 즉시 반납**되어야 한다.
+    ///
+    /// 앱의 "서버 중지/재시작"이 이 성질에 의존한다 — 리스너가 serve 퓨처 안에 살기 때문에
+    /// 태스크를 버리면 소켓이 닫힌다. 이게 깨지면 앱을 죽이는 것 말고 포트를 놓을 방법이 없다.
+    #[tokio::test]
+    async fn aborting_serve_releases_the_port() {
+        init_crypto();
+        let server_id = Identity::generate();
+        let acceptor = TlsAcceptor::from(tls::server_config(&server_id).unwrap());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let task = tokio::spawn(serve(listener, acceptor, Shared::new(None)));
+
+        // 서빙 중에는 같은 주소를 다시 바인딩할 수 없다(점유 확인).
+        assert!(
+            TcpListener::bind(addr).await.is_err(),
+            "서빙 중에는 포트가 점유돼야 한다"
+        );
+
+        task.abort();
+
+        // abort 반영 후 재바인딩 가능 = 포트 반납됨.
+        for _ in 0..100 {
+            if TcpListener::bind(addr).await.is_ok() {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        panic!("abort 후에도 포트가 반납되지 않았다");
+    }
+
     #[tokio::test]
     async fn non_member_cannot_sync() {
         init_crypto();
