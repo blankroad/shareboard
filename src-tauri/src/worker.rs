@@ -559,13 +559,14 @@ async fn handle_msg(
                 try_set_gk_from_wrap(&mut core, &wrapped);
             }
             // 3) 로그 기반 상태/멤버 갱신(GK 확보 후 프로필 복호).
-            if !w.log_tail.is_empty() {
-                if let Ok(v) = verify_chain(&core.log, 0) {
-                    core.workspace_id = Some(v.workspace_id);
-                    core.settings.server.workspace_name = Some(v.workspace_name.clone());
-                    let gk = core.current_gk.clone();
-                    core.members = members_from(&v, &w.presence, gk.as_ref());
-                }
+            //
+            // log_tail 이 비어 있어도(이미 최신) **presence 는 반영해야 한다** — 서버 재시작 후
+            // 재연결처럼 tail 이 없는 경우에 목록이 옛 online 상태로 굳는다.
+            if let Ok(v) = verify_chain(&core.log, 0) {
+                core.workspace_id = Some(v.workspace_id);
+                core.settings.server.workspace_name = Some(v.workspace_name.clone());
+                let gk = core.current_gk.clone();
+                core.members = members_from(&v, &w.presence, gk.as_ref());
             }
             core.connected = true;
             emit_status(app, &core);
@@ -638,7 +639,8 @@ async fn handle_msg(
         } => {
             let mut core = state.lock().await;
             let name = decode_profile_name(core.current_gk.as_ref(), &enc_profile);
-            if let Some(m) = core.members.iter_mut().find(|m| m.device_id == hex(&device_id)) {
+            let id_hex = hex(&device_id);
+            if let Some(m) = core.members.iter_mut().find(|m| m.device_id == id_hex) {
                 m.online = online;
                 if addr.is_some() {
                     m.addr = addr;
@@ -646,6 +648,21 @@ async fn handle_msg(
                 if name.is_some() {
                     m.name = name;
                 }
+            } else if verify_chain(&core.log, 0)
+                .map(|v| v.is_member(&device_id))
+                .unwrap_or(false)
+            {
+                // 로그상 멤버인데 목록에 없다 = presence 가 LogAppended 보다 먼저 왔다.
+                // 버리면 "상대는 연결됐는데 내 목록엔 오프라인"이 영구히 남는다.
+                core.members.push(MemberView {
+                    device_id: id_hex,
+                    name,
+                    online,
+                    platform: String::new(),
+                    addr,
+                });
+            } else {
+                tracing::debug!("멤버가 아닌 device 의 presence 무시: {}", &id_hex[..8]);
             }
             let _ = app.emit("members-changed", ());
             emit_status(app, &core);

@@ -253,6 +253,28 @@ impl Shared {
                     server_time_ms: 0,
                 };
                 send_to(&g, &dev, S2c::Welcome(w));
+
+                // 내가 온라인이 된 것을 다른 멤버에게 알린다.
+                //
+                // on_connect 은 "접속 시점에 이미 멤버"인 경우만 알린다 — 조인자는 게스트로
+                // 붙어 같은 연결에서 Add 를 append 하므로 그 시점엔 멤버가 아니었다. 여기서
+                // 알리지 않으면 기존 멤버 목록에 영원히 오프라인으로 남는다(정작 조인자 자신은
+                // 연결됨으로 보이는 비대칭). Hello = "멤버로서 왔다" 선언이라 여기가 제자리다.
+                if roster.contains(&dev) {
+                    let addr = g.addrs.get(&dev).cloned();
+                    let profile = g.profiles.get(&dev).cloned();
+                    broadcast_members(
+                        &g,
+                        &roster,
+                        &dev,
+                        S2c::Presence {
+                            device_id: dev,
+                            online: true,
+                            addr,
+                            enc_profile: profile,
+                        },
+                    );
+                }
             }
 
             C2s::ClipSignal { hdr, e2e } => {
@@ -776,6 +798,87 @@ mod integration {
 
     fn contains(hay: &[u8], needle: &[u8]) -> bool {
         hay.windows(needle.len()).any(|w| w == needle)
+    }
+
+    /// presence 잡음 속에서 특정 device 의 online 알림을 찾는다(없으면 None).
+    async fn recv_presence_for(
+        conn: &mut sb_net::Connection,
+        who: DeviceId,
+    ) -> Option<(bool, Option<String>)> {
+        for _ in 0..10 {
+            match tokio::time::timeout(std::time::Duration::from_millis(500), conn.recv()).await {
+                Ok(Ok(S2c::Presence {
+                    device_id,
+                    online,
+                    addr,
+                    ..
+                })) if device_id == who => return Some((online, addr)),
+                Ok(Ok(_)) => continue,
+                _ => return None,
+            }
+        }
+        None
+    }
+
+    /// **게스트로 붙어 그 연결에서 조인**한 멤버가 Hello 를 보내면, 기존 멤버에게 온라인으로
+    /// 보여야 한다 — 앱의 실제 조인 순서(초대 코드만 들고 접속 → Add append → Hello)다.
+    ///
+    /// 회귀 방지: on_connect 은 "이미 멤버"일 때만 presence 를 알린다. 조인자는 그 시점에
+    /// 게스트여서 아무도 그가 온라인이 된 것을 듣지 못했다 — 호스트 목록에는 계속 오프라인,
+    /// 정작 클라이언트 자신은 연결됨으로 보이는 비대칭이 났다.
+    #[tokio::test]
+    async fn guest_that_joins_on_its_own_connection_becomes_online() {
+        init_crypto();
+        let server_id = Identity::generate();
+        let (scert_der, _) = server_id.tls_material().unwrap();
+        let server_fp = cert_fingerprint(&CertificateDer::from(scert_der));
+        let shared = Shared::new(Some(sha256(b"setup-token")));
+        let addr = start_server(shared, &server_id).await;
+
+        let a = Identity::generate();
+        let b = Identity::generate();
+
+        // A: 워크스페이스 생성 + 멤버로 접속 유지.
+        let (genesis, wid) = wslog::build_genesis(&a, "eng-team", 1);
+        let mut ca = sb_net::connect(addr, server_fp, &a).await.unwrap();
+        ca.send(C2s::ClaimWorkspace {
+            token: "setup-token".into(),
+            genesis: wslog::entry_bytes(&genesis),
+        })
+        .await
+        .unwrap();
+        assert!(matches!(ca.recv().await.unwrap(), S2c::AppendAck { seq: 0, .. }));
+
+        // A 가 초대(grant)를 발급 — 실제로는 초대 코드로 B 에게 전달된다.
+        let grant = sb_crypto::generate_grant();
+        let gc = wslog::build_grant_cert(&a, grant.pk_der.clone(), 10_000, wid);
+        let head = wslog::entry_hash(&wslog::entry_bytes(&genesis));
+
+        // B: **아직 멤버가 아닌 상태로** 접속(게스트) → 그 연결에서 Add append → Hello.
+        let mut cb = sb_net::connect(addr, server_fp, &b).await.unwrap();
+        let add = wslog::build_add(&grant.sk, gc, &b.public(), head, 1, 2);
+        cb.send(C2s::AppendEntry {
+            entry: wslog::entry_bytes(&add),
+        })
+        .await
+        .unwrap();
+        assert!(matches!(cb.recv().await.unwrap(), S2c::AppendAck { seq: 1, .. }));
+        cb.send(C2s::Hello(Hello {
+            device_id: b.device_id(),
+            proto_min: sb_proto::params::PROTO_MIN,
+            proto_max: sb_proto::params::PROTO_MAX,
+            app_version: "test".into(),
+            epoch: 0,
+            log_head: (0, [0u8; 32]),
+        }))
+        .await
+        .unwrap();
+
+        let (online, stamped) = recv_presence_for(&mut ca, b.device_id())
+            .await
+            .expect("조인자의 presence(online) 가 기존 멤버에게 전파되어야 한다");
+        assert!(online, "online=true 여야 한다");
+        assert!(stamped.is_some(), "서버가 접속 주소를 스탬프해야 한다");
     }
 
     /// 파일 클립(`ContentKind::Files`)이 릴레이를 거쳐 이름·내용 그대로 도착하고,
