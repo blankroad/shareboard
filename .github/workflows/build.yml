@@ -76,6 +76,8 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # Tauri 커맨드 인자 이름(camelCase) 대조 — 어긋나면 런타임에만 터지므로 여기서 막는다.
+      - run: node scripts/check-ipc-args.mjs
       - run: pnpm build
 
   # 데스크톱 앱 컴파일 체크 (번들링 제외 — 서명 필요).

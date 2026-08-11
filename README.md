@@ -580,6 +580,15 @@ two clients complete a full E2E sync through a real relay — one for text, one 
 also asserts the relay never sees a filename. `sb-net` stands up an actual TLS server on loopback.
 The desktop app crate adds 7 more (`cd src-tauri && cargo test -p shareboard`).
 
+**IPC argument names** — Tauri v2 expects payload keys in **camelCase** (`device_id` → `deviceId`).
+A mismatch type-checks fine and only fails at runtime (`invalid args \`deviceId\` for command …`),
+which silently broke member removal, invite-code generation and founding on a standalone server. The
+`frontend` CI job and `pnpm check:ipc` compare every `invoke()` payload against the Rust signatures:
+
+```bash
+pnpm check:ipc     # node scripts/check-ipc-args.mjs
+```
+
 **Cross-platform pre-flight** — the platform-gated clipboard code is easy to break from macOS (a
 dependency declared for only one target compiles fine locally and fails CI). These two checks need no
 Windows/Linux machine, only `rustup target add`:

@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "check:ipc": "node scripts/check-ipc-args.mjs",
     "preview": "vite preview",
     "tauri": "tauri"
   },

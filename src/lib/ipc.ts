@@ -54,7 +54,9 @@ export const api = {
   appInfo: () => invoke<AppInfo>("app_info"),
   getStatus: () => invoke<Status>("get_status"),
   getMembers: () => invoke<Member[]>("get_members"),
-  revokeMember: (device_id: string) => invoke("revoke_member", { device_id }),
+  // Tauri v2 는 커맨드 인자 키를 **camelCase** 로 기대한다(rust snake_case → js camelCase).
+  // snake_case 로 보내면 런타임에 "invalid args … missing" 이 난다 — scripts/check-ipc-args.mjs 가 지킨다.
+  revokeMember: (device_id: string) => invoke("revoke_member", { deviceId: device_id }),
   getSettings: () => invoke<any>("get_settings"),
   updateSettings: (settings: any) => invoke("update_settings", { settings }),
   setSyncEnabled: (enabled: boolean) => invoke("set_sync_enabled", { enabled }),
@@ -65,12 +67,22 @@ export const api = {
   setPinned: (id: string, pinned: boolean) => invoke("set_pinned", { id, pinned }),
   clearHistory: () => invoke("clear_history"),
   configureServer: (addr: string, fingerprint_hex: string, workspace_name?: string) =>
-    invoke("configure_server", { addr, fingerprint_hex, workspace_name }),
+    invoke("configure_server", {
+      addr,
+      fingerprintHex: fingerprint_hex,
+      workspaceName: workspace_name,
+    }),
   // 기존 sb-server 에 워크스페이스를 새로 만든다(창립자). 주소·지문 설정까지 한 번에 처리.
   createWorkspace: (addr: string, fingerprint_hex: string, name: string, setup_token: string) =>
-    invoke("create_workspace", { addr, fingerprint_hex, name, setup_token, now_ms: Date.now() }),
+    invoke("create_workspace", {
+      addr,
+      fingerprintHex: fingerprint_hex,
+      name,
+      setupToken: setup_token,
+      nowMs: Date.now(),
+    }),
   joinWorkspace: (code: string) => invoke("join_workspace", { code }),
-  generateInvite: () => invoke<string>("generate_invite", { expires_at: Date.now() + 3600_000 }),
+  generateInvite: () => invoke<string>("generate_invite", { expiresAt: Date.now() + 3600_000 }),
   generateInviteLink: () => invoke<string>("generate_invite_link"),
   joinByLink: (link: string) => invoke("join_by_link", { link }),
   resetOnboarding: () => invoke("reset_onboarding"),
