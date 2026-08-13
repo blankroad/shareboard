@@ -11,7 +11,9 @@ use image::{DynamicImage, ImageFormat, RgbaImage};
 
 use crate::{ClipContent, ClipError, ClipboardAccess};
 
-/// arboard 백엔드. 상태를 들지 않고 호출마다 클립보드 핸들을 연다(단순·안전).
+/// arboard 백엔드.
+///
+/// 핸들 수명은 플랫폼마다 다르게 잡는다 — [`with_clipboard`] 주석 참고.
 pub struct ArboardAccess;
 
 impl ArboardAccess {
@@ -28,6 +30,43 @@ impl Default for ArboardAccess {
 
 fn err<E: std::fmt::Display>(e: E) -> ClipError {
     ClipError::Access(e.to_string())
+}
+
+/// 클립보드 핸들을 열어 `f` 를 실행한다.
+///
+/// **Linux 는 클립보드 내용이 소유 프로세스 안에 산다**(X11 selection / Wayland data source).
+/// 그래서 `Clipboard` 를 쓰기마다 만들고 버리면 함수가 끝나는 순간 선택 소유권이 사라져
+/// 다른 앱에서 붙여넣기가 되지 않는다 — "히스토리에는 들어왔는데 Ctrl+V 는 옛 내용"이 된다.
+/// (Docker 검증: 핸들을 살려 두면 `xclip -o -t UTF8_STRING` 로 읽히고, drop 하면 소유자 자체가
+/// 사라진다.) 따라서 Linux 에서는 프로세스 수명 동안 인스턴스 하나를 유지하고 읽기·쓰기를
+/// 그 하나로 직렬화한다.
+///
+/// macOS/Windows 는 OS(NSPasteboard / Win32 클립보드)가 데이터를 보관하므로 호출마다 열어도
+/// 되고, 기존 동작을 그대로 둔다.
+#[cfg(target_os = "linux")]
+fn with_clipboard<R>(f: impl FnOnce(&mut Clipboard) -> R) -> Result<R, ClipError> {
+    use std::sync::{Mutex, OnceLock};
+
+    static SHARED: OnceLock<Mutex<Clipboard>> = OnceLock::new();
+
+    if SHARED.get().is_none() {
+        // OnceLock::get_or_init 은 실패를 표현할 수 없어 먼저 만들어 넣는다(경합해도 안전).
+        let cb = Clipboard::new().map_err(err)?;
+        let _ = SHARED.set(Mutex::new(cb));
+    }
+    let cell = SHARED
+        .get()
+        .ok_or_else(|| ClipError::Access("클립보드 초기화 실패".into()))?;
+    let mut guard = cell
+        .lock()
+        .map_err(|_| ClipError::Access("클립보드 잠금 오염".into()))?;
+    Ok(f(&mut guard))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn with_clipboard<R>(f: impl FnOnce(&mut Clipboard) -> R) -> Result<R, ClipError> {
+    let mut cb = Clipboard::new().map_err(err)?;
+    Ok(f(&mut cb))
 }
 
 fn rgba_to_png(img: ImageData) -> Result<Vec<u8>, ClipError> {
@@ -64,14 +103,13 @@ impl ClipboardAccess for ArboardAccess {
             return crate::files::bundle_from_paths(&paths).map(Some);
         }
 
-        let mut cb = Clipboard::new().map_err(err)?;
         // 텍스트 우선(§5.5 다중 포맷 우선순위: 텍스트 > 이미지).
-        if let Ok(t) = cb.get_text() {
+        if let Some(t) = with_clipboard(|cb| cb.get_text().ok())? {
             if !t.is_empty() {
                 return Ok(Some(ClipContent::text(t)));
             }
         }
-        if let Ok(img) = cb.get_image() {
+        if let Some(img) = with_clipboard(|cb| cb.get_image().ok())? {
             return Ok(Some(ClipContent::image_png(rgba_to_png(img)?)));
         }
 
@@ -88,14 +126,12 @@ impl ClipboardAccess for ArboardAccess {
     fn write(&self, content: &ClipContent) -> Result<(), ClipError> {
         match content.kind {
             sb_proto::ContentKind::Text => {
-                let mut cb = Clipboard::new().map_err(err)?;
                 let s = String::from_utf8_lossy(&content.bytes).into_owned();
-                cb.set_text(s).map_err(err)
+                with_clipboard(|cb| cb.set_text(s).map_err(err))?
             }
             sb_proto::ContentKind::ImagePng => {
-                let mut cb = Clipboard::new().map_err(err)?;
                 let data = png_to_rgba(&content.bytes)?;
-                cb.set_image(data).map_err(err)
+                with_clipboard(|cb| cb.set_image(data).map_err(err))?
             }
             // 파일은 디스크에 실체가 있어야 붙여넣기가 성립한다 → 앱이 파일을 만든 뒤
             // write_file_paths 로 경로를 올린다(§파일 클립보드).

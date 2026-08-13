@@ -722,7 +722,10 @@ async fn apply_to_clipboard(
         }
     } else {
         let content = ClipContent { kind, bytes };
-        let _ = watcher.lock().await.write(&content);
+        // 조용히 삼키면 "히스토리엔 들어왔는데 붙여넣기가 안 된다"의 원인을 못 찾는다.
+        if let Err(e) = watcher.lock().await.write(&content) {
+            tracing::warn!("받은 클립을 OS 클립보드에 쓰지 못했습니다: {e}");
+        }
     }
     let _ = app.emit("clipboard-synced", ());
     let _ = app.emit("history-updated", ());

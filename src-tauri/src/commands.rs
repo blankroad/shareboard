@@ -246,6 +246,23 @@ pub async fn get_settings(state: State<'_, AppState>) -> Result<sb_core::Setting
     Ok(state.lock().await.settings.clone())
 }
 
+/// 프런트가 보낸 설정을 현재 설정에 **병합**한다.
+///
+/// 프런트의 `settings` 는 앱을 연 시점의 스냅숏이다. 그 뒤 워크스페이스를 만들거나(호스팅·참여)
+/// 자동 시작·핫키를 전용 커맨드로 바꾸면 백엔드 값만 바뀌고 프런트 스냅숏은 낡은 채로 남는다.
+/// 그 상태에서 설정 탭의 "저장"을 누르면 통째 교체 때문에 **서버 주소·지문·워크스페이스 이름이
+/// null 로 덮여 온보딩 화면으로 되돌아갔다**(디스크에도 그대로 기록돼 재시작해도 복구 안 됨).
+///
+/// 그래서 전용 커맨드/워커가 주인인 필드는 현재 값을 지키고, 설정 화면이 실제로 편집하는
+/// 값만 받아들인다. (설정 UI 는 server 섹션·autostart·quick_hotkey 를 편집하지 않는다.)
+fn merge_settings(current: &sb_core::Settings, incoming: sb_core::Settings) -> sb_core::Settings {
+    let mut next = incoming;
+    next.server = current.server.clone();
+    next.app.autostart = current.app.autostart;
+    next.app.quick_hotkey = current.app.quick_hotkey.clone();
+    next
+}
+
 #[tauri::command]
 pub async fn update_settings(
     app: AppHandle,
@@ -253,17 +270,12 @@ pub async fn update_settings(
     settings: sb_core::Settings,
 ) -> Result<(), String> {
     let mut core = state.lock().await;
-    // 핫키·자동 시작은 OS 등록이 걸려 있어 값 변화를 감지해 반영한다.
-    let prev_hotkey = core.settings.app.quick_hotkey.clone();
-    let prev_autostart = core.settings.app.autostart;
-    core.settings = settings;
+    core.settings = merge_settings(&core.settings, settings);
     let enabled = core.settings.sync.enabled;
     core.engine.set_enabled(enabled);
     // 디스크 저장.
     let path = core.data_dir.join("settings.json");
     sb_store::files::save_json(&path, &core.settings).map_err(|e| e.to_string())?;
-    let new_hotkey = core.settings.app.quick_hotkey.clone();
-    let new_autostart = core.settings.app.autostart;
     let need_reconnect = core.settings.server.addr.is_some();
     emit_status(&app, &core);
     let rc = core.reconnect.clone();
@@ -271,16 +283,8 @@ pub async fn update_settings(
     if need_reconnect {
         rc.notify_one();
     }
-    if new_hotkey != prev_hotkey {
-        if let Err(e) = crate::quick::apply_hotkey(&app, &new_hotkey) {
-            // 저장은 이미 됐으므로 이전 핫키로 되돌려 "아무 핫키도 없는" 상태를 피한다.
-            let _ = crate::quick::apply_hotkey(&app, &prev_hotkey);
-            return Err(e);
-        }
-    }
-    if new_autostart != prev_autostart {
-        sync_autostart(&app, new_autostart)?;
-    }
+    // 핫키·자동 시작은 여기서 다루지 않는다 — merge_settings 가 현재 값을 지키고,
+    // 변경은 set_quick_hotkey / set_autostart 가 OS 등록까지 책임진다.
     // 기기 이름이 바뀌었을 수 있으니 프로필 재발행.
     crate::worker::send_profile(state.inner()).await;
     Ok(())
@@ -441,11 +445,19 @@ pub async fn delete_history_item(
 }
 
 #[tauri::command]
-pub async fn set_pinned(state: State<'_, AppState>, id: String, pinned: bool) -> Result<(), String> {
+pub async fn set_pinned(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    pinned: bool,
+) -> Result<(), String> {
     let id = hex32(&id).ok_or("잘못된 id")?;
     let mut core = state.lock().await;
     core.engine.history_mut().set_pinned(&id, pinned);
     let _ = core.history.set_pinned(&id, pinned);
+    // delete/clear 와 마찬가지로 알려야 화면이 바뀐다 — 이게 없으면 핀을 눌러도
+    // 버튼이 "핀" 그대로라 아무 일도 안 일어난 것처럼 보인다.
+    let _ = app.emit("history-updated", ());
     Ok(())
 }
 
@@ -835,4 +847,41 @@ pub fn persist_group_key(core: &Core, gk: &sb_crypto::GroupKey) -> Result<(), St
     let mut buf = gk.epoch().to_le_bytes().to_vec();
     buf.extend_from_slice(gk.expose());
     store.set("group.key", &buf).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 설정 탭의 "저장"이 워크스페이스 설정을 날려 온보딩으로 되돌아가던 회귀(§UI 검증).
+    /// 프런트가 들고 있던 낡은 스냅숏(server 비어 있음)을 보내도 서버 정보는 살아 있어야 한다.
+    #[test]
+    fn merge_keeps_backend_owned_fields() {
+        let mut current = sb_core::Settings::default();
+        current.server.addr = Some("192.168.0.10:45871".into());
+        current.server.fingerprint_hex = Some("ab".repeat(32));
+        current.server.workspace_name = Some("디자인팀".into());
+        current.app.autostart = true;
+        current.app.quick_hotkey = "Alt+Space".into();
+
+        // 프런트 스냅숏: 워크스페이스를 만들기 전 값 + 사용자가 바꾼 항목.
+        let mut incoming = sb_core::Settings::default();
+        incoming.app.device_name_override = Some("chulsoo".into());
+        incoming.sync.sync_images = false;
+        incoming.history.memory_max_items = 50;
+
+        let merged = merge_settings(&current, incoming);
+
+        // 전용 커맨드/워커가 주인인 값은 그대로.
+        assert_eq!(merged.server.addr.as_deref(), Some("192.168.0.10:45871"));
+        assert_eq!(merged.server.fingerprint_hex, current.server.fingerprint_hex);
+        assert_eq!(merged.server.workspace_name.as_deref(), Some("디자인팀"));
+        assert!(merged.app.autostart);
+        assert_eq!(merged.app.quick_hotkey, "Alt+Space");
+
+        // 설정 화면이 실제로 편집하는 값은 반영.
+        assert_eq!(merged.app.device_name_override.as_deref(), Some("chulsoo"));
+        assert!(!merged.sync.sync_images);
+        assert_eq!(merged.history.memory_max_items, 50);
+    }
 }

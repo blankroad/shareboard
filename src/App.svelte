@@ -171,6 +171,8 @@
     try {
       await api.setAutostart(!autostart);
       autostart = await api.getAutostart();
+      // 로컬 스냅숏도 맞춰 둔다 — 저장 버튼이 낡은 값을 되돌려 보내지 않도록.
+      if (settings) settings.app.autostart = autostart;
     } catch (e: any) {
       hotkeyErr = String(e);
     }
