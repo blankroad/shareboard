@@ -12,6 +12,9 @@ dist
 # 배포물 (scripts/build-windows.ps1 산출물)
 /release
 
+# Docker Linux 검증 산출물 (scripts/docker/run.sh)
+/verify-out
+
 # OS / editor
 .DS_Store
 *.swp
