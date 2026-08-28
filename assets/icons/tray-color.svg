@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- 트레이/작업 표시줄용 컬러 아이콘 — 데스크톱 앱 아이콘(app-icon.svg)과 같은 마크. PLAN.md §9
+       macOS 메뉴 막대는 template(검정+알파)을 OS 가 반전해 주지만, Windows 작업 표시줄·
+       Linux 트레이는 반전이 없어 검정 글리프가 어두운 배경에 묻힌다. 그쪽은 이 컬러본을 쓴다.
+       16~32px 에서 뭉개지지 않도록 바탕을 꽉 채우고 획·노드를 굵혔다(형태는 동일). -->
+  <rect x="16" y="16" width="992" height="992" rx="224" fill="#2563EB"/>
+  <!-- 클립보드 본체 -->
+  <rect x="266" y="192" width="492" height="672" rx="76" fill="none" stroke="#FFFFFF" stroke-width="76"/>
+  <!-- 클립보드 집게 -->
+  <rect x="420" y="132" width="184" height="126" rx="44" fill="#2563EB" stroke="#FFFFFF" stroke-width="62"/>
+  <!-- 공유 노드 연결선 -->
+  <line x1="412" y1="560" x2="628" y2="424" stroke="#FFFFFF" stroke-width="64"/>
+  <line x1="412" y1="560" x2="628" y2="696" stroke="#FFFFFF" stroke-width="64"/>
+  <!-- 노드 -->
+  <circle cx="412" cy="560" r="74" fill="#FFFFFF"/>
+  <circle cx="628" cy="424" r="74" fill="#FFFFFF"/>
+  <circle cx="628" cy="696" r="74" fill="#FFFFFF"/>
+</svg>

@@ -100,6 +100,20 @@ fn build_core() -> Core {
     }
 }
 
+// 트레이 아이콘. macOS 메뉴 막대는 template(검정+알파)을 OS 가 배경에 맞춰 반전해 주지만,
+// Windows 작업 표시줄·Linux 트레이는 반전이 없어 검정 글리프가 어두운 배경에 그대로 묻힌다.
+// 그래서 그쪽은 데스크톱 앱 아이콘과 같은 마크의 컬러본(파란 바탕 + 흰 글리프)을 쓴다.
+// 크기는 각 OS 가 실제로 축소해 그리는 폭에 맞췄다(Windows 16~32, Linux 패널 22~48).
+#[cfg(target_os = "macos")]
+const TRAY_ICON: &[u8] = include_bytes!("../icons/tray/tray-template-44.png");
+#[cfg(target_os = "windows")]
+const TRAY_ICON: &[u8] = include_bytes!("../icons/tray/tray-color-32.png");
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+const TRAY_ICON: &[u8] = include_bytes!("../icons/tray/tray-color-64.png");
+
+// template 은 macOS 전용 규약. 다른 OS 에서 켜면 아이콘이 검게 칠해진다.
+const TRAY_ICON_IS_TEMPLATE: bool = cfg!(target_os = "macos");
+
 fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     let show = MenuItem::with_id(app, "show", "창 열기", true, None::<&str>)?;
     let quick = MenuItem::with_id(app, "quick", "히스토리 팝업", true, None::<&str>)?;
@@ -107,12 +121,11 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     let quit = MenuItem::with_id(app, "quit", "종료", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&show, &quick, &toggle, &quit])?;
 
-    let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/tray/tray-template-44.png"))
-        .expect("tray icon");
+    let icon = tauri::image::Image::from_bytes(TRAY_ICON).expect("tray icon");
 
     let _tray = TrayIconBuilder::with_id("main")
         .icon(icon)
-        .icon_as_template(true)
+        .icon_as_template(TRAY_ICON_IS_TEMPLATE)
         .tooltip("shareboard")
         .menu(&menu)
         .show_menu_on_left_click(false)
