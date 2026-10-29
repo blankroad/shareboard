@@ -21,6 +21,11 @@ use sb_proto::ContentKind;
 pub mod arboard_backend;
 
 pub mod files;
+pub mod uri_list;
+
+/// Linux 파일 클립보드(X11 selection 직접 처리 — Nautilus/Dolphin 호환 형식).
+#[cfg(target_os = "linux")]
+pub mod x11_files;
 
 #[cfg(target_os = "macos")]
 pub mod macos;

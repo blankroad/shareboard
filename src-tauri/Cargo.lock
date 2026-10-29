@@ -3913,6 +3913,7 @@ dependencies = [
  "sb-proto",
  "thiserror 2.0.19",
  "tracing",
+ "x11rb",
 ]
 
 [[package]]

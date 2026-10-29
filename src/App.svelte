@@ -44,7 +44,7 @@
   let hotkeyErr = $state<string | null>(null);
   /// OS 실제 등록 상태(설정값과 어긋날 수 있어 따로 읽는다).
   let autostart = $state(false);
-  /// 파일 클립보드 지원 여부(Linux 는 아직 미지원) + 받은 파일 폴더.
+  /// 파일 클립보드 지원 여부 + 받은 파일 폴더.
   let filesOk = $state(true);
   let receivedDir = $state("");
   let imageDirErr = $state<string | null>(null);
@@ -530,7 +530,7 @@
         {#if filesOk}
           <p class="pill">파일을 복사하면 다른 기기에도 <b>파일로</b> 붙여넣어집니다. 받은 파일은 아래 폴더에 저장되고, 그 파일이 클립보드에 올라갑니다.</p>
         {:else}
-          <div class="warn-banner">이 플랫폼(Linux)은 아직 파일 클립보드를 지원하지 않습니다 — 텍스트·이미지만 동기화됩니다.</div>
+          <div class="warn-banner">이 플랫폼은 아직 파일 클립보드를 지원하지 않습니다 — 텍스트·이미지만 동기화됩니다.</div>
         {/if}
         <div class="row">
           <div class="grow">받은 파일 폴더</div>

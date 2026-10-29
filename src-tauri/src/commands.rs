@@ -511,7 +511,7 @@ pub async fn open_image_dir(app: AppHandle, state: State<'_, AppState>) -> Resul
         .map_err(|e| e.to_string())
 }
 
-/// 이 플랫폼이 파일 클립보드를 지원하는가(UI 안내용 — Linux 는 아직 미지원).
+/// 이 플랫폼이 파일 클립보드를 지원하는가(UI 안내용).
 #[tauri::command]
 pub fn files_supported() -> bool {
     sb_clipboard::files::files_supported()

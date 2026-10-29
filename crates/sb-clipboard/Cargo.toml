@@ -33,6 +33,8 @@ clipboard-win = "5"
 # Wayland 네이티브 백엔드 (Linux 전용·옵션). data-control 이벤트 감시는 후속(현재 폴링).
 [target.'cfg(target_os = "linux")'.dependencies]
 wl-clipboard-rs = { version = "0.9", optional = true }
+# 파일 클립보드(X11 CLIPBOARD selection 직접 소유 — gnome-copied-files 제공). arboard 가 이미 쓰는 버전.
+x11rb = "0.13"
 
 [dev-dependencies]
 sb-core = { path = "../sb-core" }

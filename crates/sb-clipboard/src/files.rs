@@ -4,8 +4,8 @@
 //! 실제로 읽는다(§3.2 — 큰 콘텐츠는 read 자체를 하지 않는다). 쓰기는 앱이 파일을 디스크에
 //! 만든 뒤 그 경로들을 클립보드에 올리는 순서다(파일 없이 붙여넣기는 성립하지 않는다).
 //!
-//! 플랫폼: macOS(`public.file-url`) · Windows(`CF_HDROP`). Linux 는 아직 미지원 —
-//! X11 `text/uri-list` 는 후속 과제이며, 그때까지 파일 클립은 무시된다(텍스트·이미지는 정상).
+//! 플랫폼: macOS(`public.file-url`) · Windows(`CF_HDROP`) ·
+//! Linux(`text/uri-list` + `x-special/gnome-copied-files`, X11/XWayland — [`crate::x11_files`]).
 
 use std::path::{Path, PathBuf};
 
@@ -24,7 +24,11 @@ pub fn clipboard_file_paths() -> Vec<PathBuf> {
     {
         crate::windows::read_file_paths()
     }
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    #[cfg(target_os = "linux")]
+    {
+        crate::x11_files::read_file_paths()
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
     {
         Vec::new()
     }
@@ -44,7 +48,11 @@ pub fn set_clipboard_file_paths(paths: &[PathBuf]) -> Result<(), ClipError> {
     {
         crate::windows::write_file_paths(paths)
     }
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    #[cfg(target_os = "linux")]
+    {
+        crate::x11_files::write_file_paths(paths)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
     {
         let _ = paths;
         Err(ClipError::Unsupported)
@@ -53,7 +61,11 @@ pub fn set_clipboard_file_paths(paths: &[PathBuf]) -> Result<(), ClipError> {
 
 /// 이 플랫폼이 파일 클립보드를 지원하는가(UI 안내용).
 pub const fn files_supported() -> bool {
-    cfg!(any(target_os = "macos", target_os = "windows"))
+    cfg!(any(
+        target_os = "macos",
+        target_os = "windows",
+        target_os = "linux"
+    ))
 }
 
 fn mib(n: u64) -> String {
