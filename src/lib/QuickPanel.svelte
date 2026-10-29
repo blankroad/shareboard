@@ -2,7 +2,7 @@
   // 히스토리 팝업(label "quick"). 글로벌 핫키로 열리고, 고르면 클립보드에 복사한 뒤 사라진다.
   // 붙여넣기 자체는 사용자가 한다(자동 붙여넣기는 macOS 접근성 권한이 필요해 v1 범위 밖).
   import { onMount } from "svelte";
-  import { api, on, hideSelf, loadThumbs, thumbKey, type HistoryItem, type Thumb } from "./ipc";
+  import { api, on, hideSelf, loadThumbs, thumbKey, dragImage, imageMenu, type HistoryItem, type Thumb } from "./ipc";
 
   let items = $state<HistoryItem[]>([]);
   let thumbs = $state<Record<string, Thumb | null>>({});
@@ -103,7 +103,13 @@
           {#if h.kind === "image"}
             {@const t = thumbs[thumbKey(h)]}
             {#if t}
-              <img class="qthumb" src={t.data_url} alt="" />
+              <img
+                class="qthumb"
+                src={t.data_url}
+                alt=""
+                ondragstart={(e) => dragImage(e, h, t)}
+                oncontextmenu={(e) => imageMenu(e, h)}
+              />
               <span class="preview">이미지 · {t.width}×{t.height} · {fmtSize(h.size)}</span>
             {:else}
               <span class="qthumb qthumb-empty" aria-hidden="true">🖼</span>

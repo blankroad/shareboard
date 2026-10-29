@@ -260,6 +260,8 @@ fn merge_settings(current: &sb_core::Settings, incoming: sb_core::Settings) -> s
     next.server = current.server.clone();
     next.app.autostart = current.app.autostart;
     next.app.quick_hotkey = current.app.quick_hotkey.clone();
+    // 이미지 저장 폴더는 set_image_dir 가 주인(폴더 생성·기존 이미지 저장까지 맡는다).
+    next.history.image_dir = current.history.image_dir.clone();
     next
 }
 
@@ -276,6 +278,7 @@ pub async fn update_settings(
     // 디스크 저장.
     let path = core.data_dir.join("settings.json");
     sb_store::files::save_json(&path, &core.settings).map_err(|e| e.to_string())?;
+    core.cleanup_images(true); // 보관 기간이 바뀌었을 수 있다
     let need_reconnect = core.settings.server.addr.is_some();
     emit_status(&app, &core);
     let rc = core.reconnect.clone();
@@ -328,6 +331,10 @@ pub async fn get_history(state: State<'_, AppState>) -> Result<Vec<HistoryItemVi
             preview: it.preview.clone(),
             pinned: it.pinned,
             has_body: core.body_cache.contains_key(&it.id),
+            file_path: core
+                .image_files
+                .get(&it.id)
+                .map(|p| p.to_string_lossy().into_owned()),
         })
         .collect();
     tracing::debug!("get_history → {}건", out.len());
@@ -420,6 +427,87 @@ pub async fn open_received_dir(app: AppHandle, state: State<'_, AppState>) -> Re
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     app.opener()
         .open_path(dir.to_string_lossy(), None::<&str>)
+        .map_err(|e| e.to_string())
+}
+
+/// 이미지 저장 폴더 지정/해제. `None`(또는 빈 문자열)이면 해제 — 이후 이미지는 메모리에만 둔다.
+///
+/// 지정하면 폴더를 만들고, 지금 메모리에 있는 이미지도 바로 저장해 기존 항목도 꺼낼 수 있게 한다.
+/// 해제해도 이미 저장된 파일은 지우지 않는다(사용자 폴더). 저장된 폴더 경로를 돌려준다.
+#[tauri::command]
+pub async fn set_image_dir(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    dir: Option<String>,
+) -> Result<Option<String>, String> {
+    let dir = dir.filter(|d| !d.trim().is_empty());
+    let prepared = match &dir {
+        Some(d) => Some(crate::images::prepare_dir(d)?),
+        None => None,
+    };
+    let mut core = state.lock().await;
+    core.settings.history.image_dir = prepared.as_ref().map(|p| p.to_string_lossy().into_owned());
+    // 폴더가 바뀌면 예전 경로 연결은 버린다(새 폴더 기준으로 다시 쓴다).
+    core.image_files.clear();
+    let path = core.data_dir.join("settings.json");
+    sb_store::files::save_json(&path, &core.settings).map_err(|e| e.to_string())?;
+    if prepared.is_some() {
+        let ids: Vec<sb_proto::ContentId> = core
+            .engine
+            .history()
+            .list()
+            .filter(|i| i.kind == ContentKind::ImagePng)
+            .map(|i| i.id)
+            .collect();
+        for id in ids {
+            let _ = core.ensure_image_file(&id);
+        }
+        core.cleanup_images(true);
+    }
+    let saved = core.settings.history.image_dir.clone();
+    drop(core);
+    let _ = app.emit("history-updated", ());
+    Ok(saved)
+}
+
+/// 이미지 항목의 저장 파일 경로(경로 복사·드래그용). 저장 폴더가 없으면 `None`.
+#[tauri::command]
+pub async fn get_image_path(state: State<'_, AppState>, id: String) -> Result<Option<String>, String> {
+    let id = hex32(&id).ok_or("잘못된 id")?;
+    let mut core = state.lock().await;
+    Ok(core
+        .ensure_image_file(&id)
+        .map(|p| p.to_string_lossy().into_owned()))
+}
+
+/// 이미지 파일을 Finder/탐색기에서 선택된 상태로 보여준다.
+#[tauri::command]
+pub async fn reveal_image(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let id = hex32(&id).ok_or("잘못된 id")?;
+    let path = state
+        .lock()
+        .await
+        .ensure_image_file(&id)
+        .ok_or("이미지 저장 폴더가 지정되지 않았습니다 (설정 → 이미지)")?;
+    app.opener().reveal_item_in_dir(path).map_err(|e| e.to_string())
+}
+
+/// 이미지 저장 폴더를 파일 관리자로 연다.
+#[tauri::command]
+pub async fn open_image_dir(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let dir = state
+        .lock()
+        .await
+        .settings
+        .history
+        .image_dir
+        .clone()
+        .ok_or("이미지 저장 폴더가 지정되지 않았습니다")?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    app.opener()
+        .open_path(dir, None::<&str>)
         .map_err(|e| e.to_string())
 }
 
@@ -863,6 +951,7 @@ mod tests {
         current.server.workspace_name = Some("디자인팀".into());
         current.app.autostart = true;
         current.app.quick_hotkey = "Alt+Space".into();
+        current.history.image_dir = Some("/Users/me/Pictures/shareboard".into());
 
         // 프런트 스냅숏: 워크스페이스를 만들기 전 값 + 사용자가 바꾼 항목.
         let mut incoming = sb_core::Settings::default();
@@ -878,6 +967,11 @@ mod tests {
         assert_eq!(merged.server.workspace_name.as_deref(), Some("디자인팀"));
         assert!(merged.app.autostart);
         assert_eq!(merged.app.quick_hotkey, "Alt+Space");
+        assert_eq!(
+            merged.history.image_dir.as_deref(),
+            Some("/Users/me/Pictures/shareboard"),
+            "낡은 스냅숏의 저장이 이미지 폴더를 지우면 안 된다"
+        );
 
         // 설정 화면이 실제로 편집하는 값은 반영.
         assert_eq!(merged.app.device_name_override.as_deref(), Some("chulsoo"));

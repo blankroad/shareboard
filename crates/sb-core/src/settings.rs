@@ -120,6 +120,14 @@ pub struct HistorySettings {
     pub max_image_item_bytes: u64,
     #[serde(default = "twenty")]
     pub max_image_originals: usize,
+    /// 이미지 저장 폴더(절대 경로). 지정하면 히스토리에 들어온 이미지를 이 폴더에 PNG 로 저장해
+    /// 경로 복사·드래그로 꺼낼 수 있게 한다. `None` 이면 지금처럼 메모리에만 둔다.
+    #[serde(default)]
+    pub image_dir: Option<String>,
+    /// 저장 폴더의 shareboard 이미지 보관 기간(일). 지나면 자동 삭제(핀 고정 항목 제외).
+    /// 0 이면 지우지 않는다. shareboard 가 만든 `shareboard-*.png` 만 대상이다.
+    #[serde(default = "seven")]
+    pub image_retention_days: u32,
 }
 
 fn thirty() -> usize {
@@ -148,6 +156,8 @@ impl Default for HistorySettings {
             store_image_originals: true,
             max_image_item_bytes: 5 * 1024 * 1024,
             max_image_originals: 20,
+            image_dir: None,
+            image_retention_days: 7,
         }
     }
 }
@@ -300,6 +310,8 @@ mod tests {
         let old = r#"{ "app": { "autostart": false, "log_level": "info" } }"#;
         let s = Settings::from_json(old).unwrap();
         assert_eq!(s.app.quick_hotkey, "CmdOrCtrl+Shift+V");
+        assert_eq!(s.history.image_dir, None, "이미지 저장 폴더 미지정 = 메모리에만");
+        assert_eq!(s.history.image_retention_days, 7);
     }
 
     #[test]

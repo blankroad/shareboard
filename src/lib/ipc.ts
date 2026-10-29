@@ -43,6 +43,8 @@ export type HistoryItem = {
   preview: string;
   pinned: boolean;
   has_body: boolean;
+  /** 이미지 저장 폴더에 써 둔 파일 경로. 폴더 미지정이면 null(경로 복사·드래그 불가). */
+  file_path: string | null;
 };
 
 /// 이미지 썸네일 — data URL + **원본** 픽셀 크기.
@@ -97,7 +99,73 @@ export const api = {
   getAutostart: () => invoke<boolean>("get_autostart"),
   setAutostart: (enabled: boolean) => invoke("set_autostart", { enabled }),
   setQuickHotkey: (accel: string) => invoke("set_quick_hotkey", { accel }),
+  setImageDir: (dir: string | null) => invoke<string | null>("set_image_dir", { dir }),
+  getImagePath: (id: string) => invoke<string | null>("get_image_path", { id }),
+  revealImage: (id: string) => invoke("reveal_image", { id }),
+  openImageDir: () => invoke("open_image_dir"),
 };
+
+/// 이미지 저장 폴더 선택 대화상자. 취소하면 null.
+export async function pickFolder(): Promise<string | null> {
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const r = await open({ directory: true, multiple: false, title: "이미지 저장 폴더 선택" });
+  return typeof r === "string" ? r : null;
+}
+
+// ── 히스토리 이미지 꺼내기 ──────────────────────────────────────────────
+// 썸네일은 data: URL 이라 WebView 기본 동작에 맡기면 "이미지 링크 복사"가 base64 문자열을 주고,
+// 밖으로 끌면 그 문자열이 파일명이 되어 실패한다. 그래서 기본 동작을 막고 저장 파일을 쓴다.
+
+/// 썸네일 dragstart — WebView 드래그를 막고 저장 파일을 OS 드래그로 넘긴다.
+/// 저장 폴더가 없으면(경로 없음) 아무것도 끌지 않는다.
+export async function dragImage(e: DragEvent, h: HistoryItem, t: Thumb | null | undefined) {
+  e.preventDefault();
+  const path = h.file_path ?? (await api.getImagePath(h.id).catch(() => null));
+  if (!path) return;
+  try {
+    const { startDrag } = await import("@crabnebula/tauri-plugin-drag");
+    await startDrag({ item: [path], icon: t?.data_url ?? path });
+  } catch (err) {
+    void invoke("log_ui_error", { message: `[drag] ${err}` }).catch(() => {});
+  }
+}
+
+/// 썸네일 우클릭 — WebView 기본 메뉴 대신 앱 메뉴.
+export async function imageMenu(e: MouseEvent, h: HistoryItem) {
+  e.preventDefault();
+  const path = h.file_path ?? (await api.getImagePath(h.id).catch(() => null));
+  const { Menu } = await import("@tauri-apps/api/menu");
+  const menu = await Menu.new({
+    items: [
+      {
+        id: "copy",
+        text: "이미지 복사",
+        enabled: h.has_body,
+        action: () => void api.copyHistoryItem(h.id),
+      },
+      {
+        id: "copy_path",
+        text: path ? "파일 경로 복사" : "파일 경로 복사 (설정 → 이미지에서 저장 폴더 지정)",
+        enabled: !!path,
+        action: () => path && void navigator.clipboard.writeText(path),
+      },
+      {
+        id: "reveal",
+        text: revealLabel(),
+        enabled: !!path,
+        action: () => void api.revealImage(h.id),
+      },
+    ],
+  });
+  await menu.popup();
+}
+
+function revealLabel() {
+  const ua = navigator.userAgent;
+  if (ua.includes("Mac")) return "Finder 에서 보기";
+  if (ua.includes("Windows")) return "탐색기에서 보기";
+  return "폴더에서 보기";
+}
 
 /// 자기 창 숨기기 — 팝업이 Esc/복사 후 사라질 때 사용.
 export async function hideSelf() {

@@ -1,7 +1,7 @@
 //! 앱 상태 — 모든 코어 크레이트를 하나로 묶는다.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde::Serialize;
@@ -9,7 +9,7 @@ use tokio::sync::{mpsc, Mutex, Notify};
 
 use sb_core::{Settings, SyncEngine};
 use sb_crypto::Identity;
-use sb_proto::{C2s, ContentId, DeviceId};
+use sb_proto::{C2s, ContentId, ContentKind, DeviceId};
 use sb_store::HistoryStore;
 
 pub type AppState = Arc<Mutex<Core>>;
@@ -37,6 +37,11 @@ pub struct Core {
     pub(crate) body_bytes: u64,
     /// 이미지 항목 썸네일(data URL) 캐시. 본문에서 파생되므로 삭제 시 함께 정리한다.
     pub thumb_cache: HashMap<ContentId, ThumbView>,
+    /// 이미지 저장 폴더에 써 둔 파일(설정 `history.image_dir` 이 있을 때만 채워진다).
+    /// 본문이 캐시에서 밀려나도 파일은 남으므로 경로 복사·드래그는 계속 된다.
+    pub image_files: HashMap<ContentId, PathBuf>,
+    /// 마지막 이미지 폴더 정리 시각(ms) — 저장할 때마다 폴더를 훑지 않도록 1시간에 한 번만.
+    pub(crate) last_image_cleanup_ms: u64,
     pub members: Vec<MemberView>,
     pub server_fp: Option<[u8; 32]>,
     pub connected: bool,
@@ -81,6 +86,8 @@ impl Core {
         self.body_bytes = self.body_bytes.saturating_add(bytes.len() as u64);
         self.body_cache.insert(id, bytes);
         self.body_order.push_back(id);
+        // 저장 폴더가 있으면 지금 파일로 써 둔다 — 캐시에서 밀려나도 꺼낼 수 있게.
+        let _ = self.ensure_image_file(&id);
 
         while self.body_bytes > cap_bytes || self.body_order.len() > cap_items {
             let Some(old) = self.body_order.pop_front() else {
@@ -104,6 +111,8 @@ impl Core {
             self.body_order.retain(|x| x != id);
         }
         self.thumb_cache.remove(id);
+        // 항목이 지워져도 디스크의 파일은 사용자 것이라 그대로 둔다(연결만 끊는다).
+        self.image_files.remove(id);
     }
 
     /// 본문·썸네일 캐시 전체 비우기.
@@ -112,6 +121,80 @@ impl Core {
         self.body_order.clear();
         self.body_bytes = 0;
         self.thumb_cache.clear();
+        self.image_files.clear();
+    }
+
+    /// 이미지 항목의 저장 파일 경로. 저장 폴더가 지정돼 있고 본문이 있으면 (없을 때) 지금 쓴다.
+    /// 폴더 미지정·이미지 아님·본문 없음·쓰기 실패면 `None` — 메모리 전용 동작 그대로.
+    pub fn ensure_image_file(&mut self, id: &ContentId) -> Option<PathBuf> {
+        if let Some(p) = self.image_files.get(id) {
+            if p.is_file() {
+                return Some(p.clone());
+            }
+            self.image_files.remove(id); // 사용자가 지웠다 — 다시 쓴다
+        }
+        let dir = self.settings.history.image_dir.clone()?;
+        let item = self.engine.history().get(id)?;
+        if item.kind != ContentKind::ImagePng {
+            return None;
+        }
+        let created = item.created_at_ms;
+        let bytes = self.body_cache.get(id)?;
+        match crate::images::save(Path::new(&dir), created, bytes) {
+            Ok(p) => {
+                tracing::debug!("이미지 저장: {}", p.display());
+                self.prune_image_files();
+                self.image_files.insert(*id, p.clone());
+                self.cleanup_images(false);
+                Some(p)
+            }
+            Err(e) => {
+                tracing::warn!("이미지 저장 실패 ({dir}): {e}");
+                None
+            }
+        }
+    }
+
+    /// 보관 기간이 지난 저장 이미지를 지운다(핀 고정 항목 제외). `force` 가 아니면 1시간에 한 번.
+    /// 앱 시작·폴더/기간 변경 때는 `force` 로 바로 돈다.
+    pub fn cleanup_images(&mut self, force: bool) {
+        const EVERY_MS: u64 = 3_600_000;
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        if !force && now_ms.saturating_sub(self.last_image_cleanup_ms) < EVERY_MS {
+            return;
+        }
+        let Some(dir) = self.settings.history.image_dir.clone() else {
+            return;
+        };
+        self.last_image_cleanup_ms = now_ms;
+        let keep: std::collections::HashSet<PathBuf> = self
+            .engine
+            .history()
+            .list()
+            .filter(|i| i.pinned)
+            .filter_map(|i| self.image_files.get(&i.id).cloned())
+            .collect();
+        let days = self.settings.history.image_retention_days;
+        let n = crate::images::cleanup(Path::new(&dir), days, &keep, std::time::SystemTime::now());
+        if n > 0 {
+            tracing::info!("이미지 저장 폴더 정리: {days}일 지난 파일 {n}개 삭제");
+            // 지운 파일을 가리키던 연결은 버린다(본문이 남아 있으면 필요할 때 다시 쓴다).
+            self.image_files.retain(|_, p| p.is_file());
+        }
+    }
+
+    /// 히스토리에서 밀려난 항목의 파일 연결을 버린다(파일 자체는 두고).
+    fn prune_image_files(&mut self) {
+        let cap = self.settings.history.memory_max_items.max(1) * 2;
+        if self.image_files.len() < cap {
+            return;
+        }
+        let alive: std::collections::HashSet<ContentId> =
+            self.engine.history().list().map(|i| i.id).collect();
+        self.image_files.retain(|id, _| alive.contains(id));
     }
 
     /// 현재 본문 캐시가 쓰는 바이트(진단용).
@@ -191,6 +274,8 @@ pub struct HistoryItemView {
     pub preview: String,
     pub pinned: bool,
     pub has_body: bool,
+    /// 이미지 저장 폴더에 써 둔 파일 경로(없으면 null — 경로 복사·드래그 불가).
+    pub file_path: Option<String>,
 }
 
 /// 히스토리 이미지 썸네일. `width`/`height` 는 **원본** 크기(UI 라벨용).

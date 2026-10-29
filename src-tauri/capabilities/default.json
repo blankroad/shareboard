@@ -11,6 +11,8 @@
     "core:window:allow-close",
     "core:app:default",
     "opener:default",
-    "deep-link:default"
+    "deep-link:default",
+    "drag:default",
+    "dialog:allow-open"
   ]
 }

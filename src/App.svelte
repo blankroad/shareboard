@@ -6,6 +6,9 @@
     loadThumbs,
     onPayload,
     thumbKey,
+    dragImage,
+    imageMenu,
+    pickFolder,
     type Status,
     type Member,
     type HistoryItem,
@@ -44,6 +47,7 @@
   /// 파일 클립보드 지원 여부(Linux 는 아직 미지원) + 받은 파일 폴더.
   let filesOk = $state(true);
   let receivedDir = $state("");
+  let imageDirErr = $state<string | null>(null);
   /// 마지막으로 건너뛴 클립의 이유(크기 상한 등) — 조용히 실패하지 않도록 배너로 보여준다.
   let skipNotice = $state<string | null>(null);
 
@@ -165,6 +169,25 @@
     } catch (e: any) {
       hotkeyErr = String(e);
       hotkeyDraft = settings.app.quick_hotkey;
+    }
+  }
+  /// 이미지 저장 폴더 — 폴더 생성·기존 이미지 저장이 걸려 있어 저장 버튼과 분리한다.
+  async function chooseImageDir() {
+    imageDirErr = null;
+    try {
+      const dir = await pickFolder();
+      if (!dir) return;
+      settings.history.image_dir = await api.setImageDir(dir);
+    } catch (e: any) {
+      imageDirErr = String(e);
+    }
+  }
+  async function clearImageDir() {
+    imageDirErr = null;
+    try {
+      settings.history.image_dir = await api.setImageDir(null);
+    } catch (e: any) {
+      imageDirErr = String(e);
     }
   }
   async function toggleAutostart() {
@@ -429,7 +452,14 @@
               {#if h.kind === "image"}
                 {@const t = thumbs[thumbKey(h)]}
                 {#if t}
-                  <img class="thumb" src={t.data_url} alt="클립보드 이미지" title="{t.width}×{t.height}" />
+                  <img
+                    class="thumb"
+                    src={t.data_url}
+                    alt="클립보드 이미지"
+                    title={h.file_path ? `${t.width}×${t.height} · 끌어서 밖으로 놓기 · 우클릭: 경로 복사` : `${t.width}×${t.height}`}
+                    ondragstart={(e) => dragImage(e, h, t)}
+                    oncontextmenu={(e) => imageMenu(e, h)}
+                  />
                   <span class="preview">이미지 · {t.width}×{t.height} · {fmtSize(h.size)}</span>
                 {:else}
                   <span class="thumb thumb-empty" aria-hidden="true">🖼</span>
@@ -511,6 +541,29 @@
           <input type="checkbox" bind:checked={settings.privacy.mark_received_files} style="width:auto" />
           받은 파일에 "다른 기기에서 왔음" 표시 (macOS quarantine / Windows Zone.Identifier)
         </label>
+      </div>
+      <div class="card">
+        <h3>이미지</h3>
+        <p class="pill">
+          저장 폴더를 지정하면 히스토리에 들어온 이미지를 그 폴더에 PNG 파일로 저장합니다 — 썸네일을 끌어서 밖으로
+          놓거나, 우클릭해서 파일 경로를 복사할 수 있습니다. 지정하지 않으면 이미지는 <b>메모리에만</b> 둡니다.
+        </p>
+        <div class="row">
+          <div class="grow">이미지 저장 폴더</div>
+          <span class="mono" style="max-width:320px;overflow:hidden;text-overflow:ellipsis">{settings.history.image_dir ?? "지정 안 함"}</span>
+          <button class="btn" onclick={chooseImageDir}>{settings.history.image_dir ? "변경" : "선택"}</button>
+          {#if settings.history.image_dir}
+            <button class="btn" onclick={() => api.openImageDir()}>열기</button>
+            <button class="btn danger" onclick={clearImageDir} title="이미 저장된 파일은 지우지 않습니다">해제</button>
+          {/if}
+        </div>
+        {#if settings.history.image_dir}
+          <label>보관 기간 (일) — 지나면 shareboard 가 저장한 이미지를 자동 삭제합니다 · 핀 고정 항목은 남김 · 0 = 계속 보관</label>
+          <input type="number" min="0" max="3650" value={settings.history.image_retention_days ?? 7}
+                 oninput={(e) => (settings.history.image_retention_days = Math.max(0, Math.min(3650, Math.floor(Number(e.currentTarget.value) || 0))))} />
+          <p class="pill">정리 대상은 <span class="mono">shareboard-*.png</span> 이름의 파일뿐이라, 같은 폴더의 다른 파일은 지우지 않습니다. (저장 버튼으로 반영)</p>
+        {/if}
+        {#if imageDirErr}<div class="warn-banner">{imageDirErr}</div>{/if}
       </div>
       <div class="card">
         <h3>히스토리 / 개인정보</h3>

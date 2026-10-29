@@ -25,20 +25,28 @@ pub fn materialize(data_dir: &Path, bundle: &FileBundle, mark: bool) -> std::io:
     let mut out = Vec::with_capacity(bundle.files.len());
     for f in &bundle.files {
         let name = sb_proto::safe_file_name(&f.name);
-        let path = target_path(&dir, &name, &f.data);
-        if path.exists() {
-            out.push(path); // 동일 내용 재사용
-            continue;
-        }
-        let tmp = dir.join(format!(".{name}.part"));
-        std::fs::write(&tmp, &f.data)?;
-        std::fs::rename(&tmp, &path)?;
-        if mark {
+        let (path, created) = write_unique(&dir, &name, &f.data)?;
+        if created && mark {
             mark_from_network(&path);
         }
         out.push(path);
     }
     Ok(out)
+}
+
+/// `dir/name` 에 `data` 를 쓴다 — 남의 파일을 덮어쓰지 않는다.
+///
+/// 같은 내용이 이미 있으면 그 경로를 재사용하고(`created = false`), 이름만 같으면 ` (n)` 을 붙인다.
+/// `.part` 임시 파일에 쓰고 rename 하므로 반쯤 쓰인 파일이 보이지 않는다. `dir` 은 있어야 한다.
+pub fn write_unique(dir: &Path, name: &str, data: &[u8]) -> std::io::Result<(PathBuf, bool)> {
+    let path = target_path(dir, name, data);
+    if path.exists() {
+        return Ok((path, false)); // 동일 내용 재사용
+    }
+    let tmp = dir.join(format!(".{name}.part"));
+    std::fs::write(&tmp, data)?;
+    std::fs::rename(&tmp, &path)?;
+    Ok((path, true))
 }
 
 /// `name` 을 쓸 경로. 같은 내용이 이미 있으면 그 경로, 충돌하면 ` (n)` 접미사.

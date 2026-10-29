@@ -6,6 +6,7 @@
 
 mod commands;
 mod core;
+mod images;
 mod quick;
 mod received;
 mod thumb;
@@ -80,6 +81,8 @@ fn build_core() -> Core {
         body_order: Default::default(),
         body_bytes: 0,
         thumb_cache: Default::default(),
+        image_files: Default::default(),
+        last_image_cleanup_ms: 0,
         members: Vec::new(),
         server_fp,
         connected: false,
@@ -181,6 +184,10 @@ fn main() {
 
     builder
         .plugin(tauri_plugin_opener::init())
+        // 히스토리 이미지를 OS 드래그로 끌어내기(WebView 기본 드래그는 data: URL 을 파일명으로 쓴다).
+        .plugin(tauri_plugin_drag::init())
+        // 이미지 저장 폴더 선택.
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         // 로그인 시 자동 실행. macOS 는 LaunchAgent(로그인 항목보다 조용함).
@@ -191,6 +198,14 @@ fn main() {
         .manage(state.clone())
         .setup(move |app| {
             setup_tray(app)?;
+
+            // 이미지 저장 폴더의 보관 기간 지난 파일 정리(폴더 미지정이면 아무것도 안 한다).
+            {
+                let st = state.clone();
+                tauri::async_runtime::spawn(async move {
+                    st.lock().await.cleanup_images(true);
+                });
+            }
 
             // 히스토리 팝업 핫키 + 자동 시작을 설정값에 맞춘다(설정이 진실).
             {
@@ -292,6 +307,10 @@ fn main() {
             commands::get_autostart,
             commands::set_autostart,
             commands::set_quick_hotkey,
+            commands::set_image_dir,
+            commands::get_image_path,
+            commands::reveal_image,
+            commands::open_image_dir,
         ])
         .run(tauri::generate_context!())
         .expect("shareboard 실행 실패");

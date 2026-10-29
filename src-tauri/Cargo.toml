@@ -25,6 +25,8 @@ if-addrs = "0.13"
 # 히스토리 이미지 썸네일(PNG 디코딩→축소→data URL). sb-clipboard 와 동일 버전·피처.
 image = { version = "0.25", default-features = false, features = ["png"] }
 base64 = "0.22"
+# 이미지 저장 파일명의 로컬 시각.
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 sb-proto = { path = "../crates/sb-proto" }
 sb-crypto = { path = "../crates/sb-crypto" }
@@ -36,6 +38,9 @@ sb-server = { path = "../crates/sb-server" }
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-autostart = "2"
 tauri-plugin-single-instance = "2"
+# 히스토리 이미지 OS 드래그 / 이미지 저장 폴더 선택.
+tauri-plugin-drag = "2.1"
+tauri-plugin-dialog = "2"
 
 [profile.release]
 opt-level = "z"
